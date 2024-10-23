@@ -21,6 +21,11 @@
  * 
  */
 
+/*
+ * CEMAXECUTER 
+ * Oct. '24 Pulled repo together with missing wifi pieces and T-Halow v1 v2 compatiblity as well as Lilygo's USB esp32S3 dongle.
+ */
+
 #if not defined(ARDUINO_ARCH_ESP32)
 #error "This program requires an ESP32"
 #endif
