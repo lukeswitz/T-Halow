@@ -908,82 +908,96 @@ void loop() {
  *
  */
 
-void print_json(int index,int secs,struct id_data *UAV) {
+// void print_json(int index,int secs,struct id_data *UAV) {
 
-  char text[128], text1[16],text2[16], text3[16], text4[16];
+//   char text[128], text1[16],text2[16], text3[16], text4[16];
 
-  dtostrf(UAV->lat_d,11,6,text1);
-  dtostrf(UAV->long_d,11,6,text2);
-  dtostrf(UAV->base_lat_d,11,6,text3);
-  dtostrf(UAV->base_long_d,11,6,text4);
+//   dtostrf(UAV->lat_d,11,6,text1);
+//   dtostrf(UAV->long_d,11,6,text2);
+//   dtostrf(UAV->base_lat_d,11,6,text3);
+//   dtostrf(UAV->base_long_d,11,6,text4);
 
-  sprintf(text,"{ \"index\": %d, \"runtime\": %d, \"mac\": \"%02x:%02x:%02x:%02x:%02x:%02x\", ",
-          index,secs,
-          UAV->mac[0],UAV->mac[1],UAV->mac[2],UAV->mac[3],UAV->mac[4],UAV->mac[5]);
-  Serial.print(text);
-  sprintf(text,"\"id\": \"%s\", \"uav latitude\": %s, \"uav longitude\": %s, \"alitude msl\": %d, ",
-          UAV->op_id,text1,text2,UAV->altitude_msl);
-  Serial.print(text);
-  sprintf(text,"\"height agl\": %d, \"base latitude\": %s, \"base longitude\": %s, \"speed\": %d, \"heading\": %d }\r\n",
-          UAV->height_agl,text3,text4,UAV->speed,UAV->heading);
-  Serial.print(text);
+//   sprintf(text,"{ \"index\": %d, \"runtime\": %d, \"mac\": \"%02x:%02x:%02x:%02x:%02x:%02x\", ",
+//           index,secs,
+//           UAV->mac[0],UAV->mac[1],UAV->mac[2],UAV->mac[3],UAV->mac[4],UAV->mac[5]);
+//   Serial.print(text);
+//   sprintf(text,"\"id\": \"%s\", \"uav latitude\": %s, \"uav longitude\": %s, \"alitude msl\": %d, ",
+//           UAV->op_id,text1,text2,UAV->altitude_msl);
+//   Serial.print(text);
+//   sprintf(text,"\"height agl\": %d, \"base latitude\": %s, \"base longitude\": %s, \"speed\": %d, \"heading\": %d }\r\n",
+//           UAV->height_agl,text3,text4,UAV->speed,UAV->heading);
+//   Serial.print(text);
 
-  return;
-}
-
-// void print_json(int index, int secs, struct id_data *UAV) {
-//     // Buffers to hold formatted string versions of the double values
-//     char text1[16], text2[16], text3[16], text4[16];
-
-//     // Convert double values to strings with 6 decimal places
-//     dtostrf(UAV->lat_d, 11, 6, text1);
-//     dtostrf(UAV->long_d, 11, 6, text2);
-//     dtostrf(UAV->base_lat_d, 11, 6, text3);
-//     dtostrf(UAV->base_long_d, 11, 6, text4);
-
-//     // Buffer to hold the JSON string
-//     char json[512];
-
-//     // Format the JSON string with the appropriate nested structure
-//     sprintf(json, 
-//             "{ "
-//                 "\"Basic ID\": { "
-//                     "\"id\": \"%s\", "
-//                     "\"id_type\": \"Serial Number (ANSI/CTA-2063-A)\" "
-//                 "}, "
-//                 "\"Location/Vector Message\": { "
-//                     "\"latitude\": %s, "
-//                     "\"longitude\": %s, "
-//                     "\"speed\": %d, "
-//                     "\"vert_speed\": 0, " // No vertical speed data available in current implementation
-//                     "\"geodetic_altitude\": %d, "
-//                     "\"height_agl\": %d "
-//                 "}, "
-//                 "\"Self-ID Message\": { "
-//                     "\"text\": \"UAV %s operational\" "
-//                 "}, "
-//                 "\"System Message\": { "
-//                     "\"latitude\": %s, "
-//                     "\"longitude\": %s "
-//                 "} "
-//             "}",
-//             UAV->op_id,                   // ID for the UAV
-//             text1,                        // UAV latitude
-//             text2,                        // UAV longitude
-//             UAV->speed,                   // Speed in m/s
-//             UAV->altitude_msl,            // Geodetic altitude in meters
-//             UAV->height_agl,              // Height AGL in meters
-//             UAV->op_id,                   // Self-ID text message
-//             text3,                        // Pilot/Base station latitude
-//             text4                         // Pilot/Base station longitude
-//     );
-
-//     // Print the formatted JSON to the serial output
-//     Serial.print(json);
-//     Serial.print("\r\n");  // New line for each JSON object
-
-//     return;
+//   return;
 // }
+
+void print_json(int index, int secs, struct id_data *UAV) {
+    // Buffers to hold formatted string versions of the double values
+    char text1[16], text2[16], text3[16], text4[16];
+
+    // Convert double values to strings with 6 decimal places
+    dtostrf(UAV->lat_d, 11, 6, text1);
+    dtostrf(UAV->long_d, 11, 6, text2);
+    dtostrf(UAV->base_lat_d, 11, 6, text3);
+    dtostrf(UAV->base_long_d, 11, 6, text4);
+
+    // Buffer to hold the JSON string
+    char json[512];
+
+    // Check if the ID is valid; if not, use the MAC as fallback
+    char id[64];
+    if (strlen(UAV->op_id) > 0) {
+        snprintf(id, sizeof(id), "%s", UAV->op_id);  // Use provided ID
+    } else {
+        snprintf(id, sizeof(id), "%02x:%02x:%02x:%02x:%02x:%02x", 
+                 UAV->mac[0], UAV->mac[1], UAV->mac[2], 
+                 UAV->mac[3], UAV->mac[4], UAV->mac[5]);  // Use MAC as fallback
+    }
+
+    // Format the JSON string with the appropriate nested structure
+    sprintf(json, 
+        "{ "
+            "\"index\": %d, "
+            "\"runtime\": %d, "
+            "\"Basic ID\": { "
+                "\"id\": \"%s\", "
+                "\"id_type\": \"Serial Number (ANSI/CTA-2063-A)\" "
+            "}, "
+            "\"Location/Vector Message\": { "
+                "\"latitude\": %s, "
+                "\"longitude\": %s, "
+                "\"speed\": %d, "
+                "\"vert_speed\": 0, "  // No vertical speed data available in current implementation
+                "\"geodetic_altitude\": %d, "
+                "\"height_agl\": %d "
+            "}, "
+            "\"Self-ID Message\": { "
+                "\"text\": \"UAV %s operational\" "
+            "}, "
+            "\"System Message\": { "
+                "\"latitude\": %s, "
+                "\"longitude\": %s "
+            "} "
+        "}",
+        index,                      // Index
+        secs,                       // Runtime in seconds
+        id,                         // UAV ID or fallback MAC address
+        text1,                      // UAV latitude
+        text2,                      // UAV longitude
+        UAV->speed,                 // Speed in m/s
+        UAV->altitude_msl,          // Geodetic altitude in meters
+        UAV->height_agl,            // Height AGL in meters
+        id,                         // Self-ID message (using the same ID/MAC fallback)
+        text3,                      // Pilot/Base station latitude
+        text4                       // Pilot/Base station longitude
+    );
+
+    // Print the formatted JSON to the serial output
+    Serial.print(json);
+    Serial.print("\r\n");  // New line for each JSON object
+
+    return;
+}
 
 /*
  *
