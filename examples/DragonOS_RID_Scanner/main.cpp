@@ -71,7 +71,7 @@ static esp_err_t event_handler(void *ctx, system_event_t *event) {
 }
 
 void setup() {
-  setCpuFrequencyMhz(120); // Underclock to 80 MHz
+  setCpuFrequencyMhz(160); // 
   Serial.begin(115200);
   Serial.println("{ \"message\": \"Starting minimalist ESP32 WiFi Remote ID Scanner\" }");
 
