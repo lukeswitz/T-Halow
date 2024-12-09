@@ -42,7 +42,7 @@
 
 static ODID_UAS_Data UAS_data;
 
-// This struct now includes a MAC address field so we can print fallback ID as before.
+// This struct holds the UAV data for a single decoded packet
 struct uav_data {
   uint8_t mac[6];
   char    op_id[ODID_ID_SIZE + 1];
@@ -62,18 +62,20 @@ static esp_err_t event_handler(void *, system_event_t *);
 static void callback(void *, wifi_promiscuous_pkt_type_t);
 static void parse_odid(struct uav_data *, ODID_UAS_Data *);
 static void parse_french_id(struct uav_data *, uint8_t *);
-static void print_json(struct uav_data *uav);
+static void print_json(struct uav_data *uav, int index);
 static void store_mac(struct uav_data *uav, uint8_t *payload);
 
-// Event handler stub
+// Global counter for how many packets have been printed
+static int packetCount = 0;
+
 static esp_err_t event_handler(void *ctx, system_event_t *event) {
   return ESP_OK;
 }
 
 void setup() {
-  setCpuFrequencyMhz(160); // 
+  setCpuFrequencyMhz(160); 
   Serial.begin(115200);
-  Serial.println("{ \"message\": \"Starting minimalist ESP32 WiFi Remote ID Scanner\" }");
+  Serial.println("{ \"message\": \"Starting WarDragon minimalist ESP32 WiFi Remote ID Scanner\" }");
 
   nvs_flash_init();
   tcpip_adapter_init();
@@ -107,35 +109,44 @@ static void callback(void* buffer, wifi_promiscuous_pkt_type_t type) {
 
   static const uint8_t nan_dest[6] = {0x51, 0x6f, 0x9a, 0x01, 0x00, 0x00};
 
-  // Check for NAN action frame (OpenDroneID)
+  // If it's a NAN action frame (OpenDroneID)
   if (memcmp(nan_dest, &payload[4], 6) == 0) {
     if (odid_wifi_receive_message_pack_nan_action_frame(&UAS_data, (char *)currentUAV.op_id, payload, length) == 0) {
       parse_odid(&currentUAV, &UAS_data);
-      print_json(&currentUAV);
+      packetCount++;
+      print_json(&currentUAV, packetCount);
     }
   } else if (payload[0] == 0x80) {
     // Beacon frame
     int offset = 36;
+    bool printed = false;
+
     while (offset < length) {
       int typ = payload[offset];
       int len = payload[offset + 1];
       uint8_t *val = &payload[offset + 2];
 
-      // Check for French format
-      if ((typ == 0xdd) && (val[0] == 0x6a) && (val[1] == 0x5c) && (val[2] == 0x35)) {
-        parse_french_id(&currentUAV, &payload[offset]);
-        print_json(&currentUAV);
-      }
-      // Check for ODID Wi-Fi beacon
-      else if ((typ == 0xdd) &&
-               (((val[0] == 0x90 && val[1] == 0x3a && val[2] == 0xe6)) ||
-                ((val[0] == 0xfa && val[1] == 0x0b && val[2] == 0xbc)))) {
-        int j = offset + 7;
-        if (j < length) {
-          memset(&UAS_data, 0, sizeof(UAS_data));
-          odid_message_process_pack(&UAS_data, &payload[j], length - j);
-          parse_odid(&currentUAV, &UAS_data);
-          print_json(&currentUAV);
+      if (!printed) {
+        // Check for French format
+        if ((typ == 0xdd) && (val[0] == 0x6a) && (val[1] == 0x5c) && (val[2] == 0x35)) {
+          parse_french_id(&currentUAV, &payload[offset]);
+          packetCount++;
+          print_json(&currentUAV, packetCount);
+          printed = true;
+        }
+        // Check for ODID Wi-Fi beacon
+        else if ((typ == 0xdd) &&
+                 (((val[0] == 0x90 && val[1] == 0x3a && val[2] == 0xe6)) ||
+                  ((val[0] == 0xfa && val[1] == 0x0b && val[2] == 0xbc)))) {
+          int j = offset + 7;
+          if (j < length) {
+            memset(&UAS_data, 0, sizeof(UAS_data));
+            odid_message_process_pack(&UAS_data, &payload[j], length - j);
+            parse_odid(&currentUAV, &UAS_data);
+            packetCount++;
+            print_json(&currentUAV, packetCount);
+            printed = true;
+          }
         }
       }
 
@@ -241,21 +252,19 @@ static void parse_french_id(struct uav_data *UAV, uint8_t *payload) {
 
 static void store_mac(struct uav_data *uav, uint8_t *payload) {
   // Source MAC is at payload[10..15] for beacon
-  // This might differ depending on frame type, but in typical mgmt frames it's consistent.
+  // This might differ depending on frame type, but for mgmt frames it's usually consistent.
   memcpy(uav->mac, &payload[10], 6);
 }
 
-static void print_json(struct uav_data *UAV) {
-  // We'll just set index=0 and runtime=0, as we don't track these now.
-  int index = 0;
-  int secs = 0;
+static void print_json(struct uav_data *UAV, int index) {
+  int secs = 0; // Still unused, but we keep it for compatibility with the original format.
 
   char text1[16], text2[16], text3[16], text4[16];
 
-  dtostrf(UAV->lat_d,  11, 6, text1);
-  dtostrf(UAV->long_d, 11, 6, text2);
-  dtostrf(UAV->base_lat_d,  11, 6, text3);
-  dtostrf(UAV->base_long_d, 11, 6, text4);
+  dtostrf(UAV->lat_d,     11, 6, text1);
+  dtostrf(UAV->long_d,    11, 6, text2);
+  dtostrf(UAV->base_lat_d,11, 6, text3);
+  dtostrf(UAV->base_long_d,11,6, text4);
 
   char id[64];
   if (strlen(UAV->op_id) > 0) {
