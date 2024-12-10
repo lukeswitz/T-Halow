@@ -44,17 +44,42 @@ static ODID_UAS_Data UAS_data;
 
 // This struct holds the UAV data for a single decoded packet
 struct uav_data {
-  uint8_t mac[6];
-  char    op_id[ODID_ID_SIZE + 1];
-  char    uav_id[ODID_ID_SIZE + 1];
-  double  lat_d;
-  double  long_d;
-  double  base_lat_d;
-  double  base_long_d;
-  int     altitude_msl;
-  int     height_agl;
-  int     speed;
-  int     heading;
+    uint8_t mac[6];
+    char    op_id[ODID_ID_SIZE + 1];
+    char    uav_id[ODID_ID_SIZE + 1];
+    double  lat_d;
+    double  long_d; 
+    double  base_lat_d;
+    double  base_long_d;
+    int     altitude_msl;
+    int     height_agl;
+    int     speed;
+    int     heading;
+    int     speed_vertical;
+    int     altitude_pressure;
+    int     horizontal_accuracy;
+    int     vertical_accuracy;
+    int     baro_accuracy;
+    int     speed_accuracy;
+    int     timestamp;
+    int     status;
+    int     height_type;
+    int     operator_location_type;
+    int     classification_type; 
+    int     area_count;
+    int     area_radius;
+    int     area_ceiling;
+    int     area_floor;
+    int     operator_altitude_geo;
+    uint32_t system_timestamp;
+    int     operator_id_type;
+    uint8_t auth_type;
+    uint8_t auth_page;
+    uint8_t auth_length;
+    uint32_t auth_timestamp;
+    char    auth_data[ODID_AUTH_PAGE_NONZERO_DATA_SIZE + 1];
+    uint8_t desc_type;
+    char    description[ODID_STR_SIZE + 1];
 };
 
 // Forward declarations
@@ -156,30 +181,63 @@ static void callback(void* buffer, wifi_promiscuous_pkt_type_t type) {
 }
 
 static void parse_odid(struct uav_data *UAV, ODID_UAS_Data *UAS_data2) {
-  memset(UAV->op_id, 0, sizeof(UAV->op_id));
-  memset(UAV->uav_id, 0, sizeof(UAV->uav_id));
+    memset(UAV->op_id, 0, sizeof(UAV->op_id));
+    memset(UAV->uav_id, 0, sizeof(UAV->uav_id));
+    memset(UAV->description, 0, sizeof(UAV->description));
+    memset(UAV->auth_data, 0, sizeof(UAV->auth_data));
 
-  if (UAS_data2->OperatorIDValid) {
-    strncpy(UAV->op_id, (char *)UAS_data2->OperatorID.OperatorId, ODID_ID_SIZE);
-  }
+    if (UAS_data2->BasicIDValid[0]) {
+        strncpy(UAV->uav_id, (char *)UAS_data2->BasicID[0].UASID, ODID_ID_SIZE);
+    }
 
-  if (UAS_data2->BasicIDValid[0]) {
-    strncpy(UAV->uav_id, (char *)UAS_data2->BasicID[0].UASID, ODID_ID_SIZE);
-  }
+    if (UAS_data2->LocationValid) {
+        UAV->lat_d = UAS_data2->Location.Latitude;
+        UAV->long_d = UAS_data2->Location.Longitude;
+        UAV->altitude_msl = (int)UAS_data2->Location.AltitudeGeo;
+        UAV->height_agl = (int)UAS_data2->Location.Height;
+        UAV->speed = (int)UAS_data2->Location.SpeedHorizontal;
+        UAV->heading = (int)UAS_data2->Location.Direction;
+        UAV->speed_vertical = (int)UAS_data2->Location.SpeedVertical;
+        UAV->altitude_pressure = (int)UAS_data2->Location.AltitudeBaro;
+        UAV->height_type = UAS_data2->Location.HeightType;
+        UAV->horizontal_accuracy = UAS_data2->Location.HorizAccuracy;
+        UAV->vertical_accuracy = UAS_data2->Location.VertAccuracy;
+        UAV->baro_accuracy = UAS_data2->Location.BaroAccuracy;
+        UAV->speed_accuracy = UAS_data2->Location.SpeedAccuracy;
+        UAV->timestamp = (int)UAS_data2->Location.TimeStamp;
+        UAV->status = UAS_data2->Location.Status;
+    }
 
-  if (UAS_data2->LocationValid) {
-    UAV->lat_d        = UAS_data2->Location.Latitude;
-    UAV->long_d       = UAS_data2->Location.Longitude;
-    UAV->altitude_msl = (int) UAS_data2->Location.AltitudeGeo;
-    UAV->height_agl   = (int) UAS_data2->Location.Height;
-    UAV->speed        = (int) UAS_data2->Location.SpeedHorizontal;
-    UAV->heading      = (int) UAS_data2->Location.Direction;
-  }
+    if (UAS_data2->SystemValid) {
+        UAV->base_lat_d = UAS_data2->System.OperatorLatitude;
+        UAV->base_long_d = UAS_data2->System.OperatorLongitude;
+        UAV->operator_location_type = UAS_data2->System.OperatorLocationType;
+        UAV->classification_type = UAS_data2->System.ClassificationType;
+        UAV->area_count = UAS_data2->System.AreaCount;
+        UAV->area_radius = UAS_data2->System.AreaRadius;
+        UAV->area_ceiling = UAS_data2->System.AreaCeiling;
+        UAV->area_floor = UAS_data2->System.AreaFloor;
+        UAV->operator_altitude_geo = UAS_data2->System.OperatorAltitudeGeo;
+        UAV->system_timestamp = UAS_data2->System.Timestamp;
+    }
 
-  if (UAS_data2->SystemValid) {
-    UAV->base_lat_d  = UAS_data2->System.OperatorLatitude;
-    UAV->base_long_d = UAS_data2->System.OperatorLongitude;
-  }
+    if (UAS_data2->AuthValid[0]) {
+        UAV->auth_type = UAS_data2->Auth[0].AuthType;
+        UAV->auth_page = UAS_data2->Auth[0].DataPage;
+        UAV->auth_length = UAS_data2->Auth[0].Length;
+        UAV->auth_timestamp = UAS_data2->Auth[0].Timestamp;
+        memcpy(UAV->auth_data, UAS_data2->Auth[0].AuthData, sizeof(UAV->auth_data)-1);
+    }
+
+    if (UAS_data2->SelfIDValid) {
+        UAV->desc_type = UAS_data2->SelfID.DescType;
+        strncpy(UAV->description, UAS_data2->SelfID.Desc, ODID_STR_SIZE);
+    }
+
+    if (UAS_data2->OperatorIDValid) {
+        UAV->operator_id_type = UAS_data2->OperatorID.OperatorIdType;
+        strncpy(UAV->op_id, (char *)UAS_data2->OperatorID.OperatorId, ODID_ID_SIZE);
+    }
 }
 
 static void parse_french_id(struct uav_data *UAV, uint8_t *payload) {
@@ -257,62 +315,94 @@ static void store_mac(struct uav_data *uav, uint8_t *payload) {
 }
 
 static void print_json(struct uav_data *UAV, int index) {
-  int secs = 0; // Still unused, but we keep it for compatibility with the original format.
+    char lat[16], lon[16], base_lat[16], base_lon[16];
+    dtostrf(UAV->lat_d, 11, 6, lat);
+    dtostrf(UAV->long_d, 11, 6, lon);
+    dtostrf(UAV->base_lat_d, 11, 6, base_lat);
+    dtostrf(UAV->base_long_d, 11, 6, base_lon);
 
-  char text1[16], text2[16], text3[16], text4[16];
-
-  dtostrf(UAV->lat_d,     11, 6, text1);
-  dtostrf(UAV->long_d,    11, 6, text2);
-  dtostrf(UAV->base_lat_d,11, 6, text3);
-  dtostrf(UAV->base_long_d,11,6, text4);
-
-  char id[64];
-  if (strlen(UAV->op_id) > 0) {
-    snprintf(id, sizeof(id), "%s", UAV->op_id);
-  } else {
-    snprintf(id, sizeof(id), "%02x:%02x:%02x:%02x:%02x:%02x",
-             UAV->mac[0], UAV->mac[1], UAV->mac[2],
+    char mac_str[18];
+    snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+             UAV->mac[0], UAV->mac[1], UAV->mac[2], 
              UAV->mac[3], UAV->mac[4], UAV->mac[5]);
-  }
 
-  char json[512];
-  sprintf(json,
-      "{ "
-        "\"index\": %d, "
-        "\"runtime\": %d, "
-        "\"Basic ID\": { "
-          "\"id\": \"%s\", "
-          "\"id_type\": \"Serial Number (ANSI/CTA-2063-A)\" "
-        "}, "
-        "\"Location/Vector Message\": { "
-          "\"latitude\": %s, "
-          "\"longitude\": %s, "
-          "\"speed\": %d, "
-          "\"vert_speed\": 0, "
-          "\"geodetic_altitude\": %d, "
-          "\"height_agl\": %d "
-        "}, "
-        "\"Self-ID Message\": { "
-          "\"text\": \"UAV %s operational\" "
-        "}, "
-        "\"System Message\": { "
-          "\"latitude\": %s, "
-          "\"longitude\": %s "
-        "} "
-      "}",
-      index,
-      secs,
-      id,
-      text1,
-      text2,
-      UAV->speed,
-      UAV->altitude_msl,
-      UAV->height_agl,
-      id,
-      text3,
-      text4
-  );
+    char json[1024];
+    snprintf(json, sizeof(json),
+        "{"
+            "\"DroneID\": {"
+                "\"%s\": {"
+                    "\"MAC\": \"%s\","
+                    "\"Basic ID\": {"
+                        "\"id_type\": %d,"
+                        "\"ua_type\": %d,"
+                        "\"id\": \"%s\""
+                    "},"
+                    "\"Location\": {"
+                        "\"status\": %d,"
+                        "\"direction\": %d,"
+                        "\"speed_horizontal\": %d,"
+                        "\"speed_vertical\": %d,"
+                        "\"latitude\": %s,"
+                        "\"longitude\": %s,"
+                        "\"alt_pressure\": %d,"
+                        "\"alt_geodetic\": %d,"
+                        "\"height\": %d,"
+                        "\"height_type\": %d,"
+                        "\"horiz_acc\": %d,"
+                        "\"vert_acc\": %d,"
+                        "\"baro_acc\": %d,"
+                        "\"speed_acc\": %d,"
+                        "\"timestamp\": %d"
+                    "},"
+                    "\"System\": {"
+                        "\"operator_loc_type\": %d,"
+                        "\"classification\": %d,"
+                        "\"operator_lat\": %s,"
+                        "\"operator_lon\": %s,"
+                        "\"area_count\": %d,"
+                        "\"area_radius\": %d,"
+                        "\"area_ceiling\": %d,"
+                        "\"area_floor\": %d,"
+                        "\"operator_alt_geo\": %d,"
+                        "\"timestamp\": %u"
+                    "},"
+                    "\"OperatorID\": {"
+                        "\"type\": %d,"
+                        "\"id\": \"%s\""
+                    "}"
+                "}"
+            "}"
+        "}",
+        mac_str, mac_str,
+        UAS_data.BasicIDValid[0] ? UAS_data.BasicID[0].IDType : 0,
+        UAS_data.BasicIDValid[0] ? UAS_data.BasicID[0].UAType : 0,
+        strlen(UAV->uav_id) > 0 ? UAV->uav_id : "NONE",
+        UAV->status,
+        UAV->heading,
+        UAV->speed,
+        UAV->speed_vertical,
+        lat, lon,
+        UAV->altitude_pressure,
+        UAV->altitude_msl,
+        UAV->height_agl,
+        UAV->height_type,
+        UAV->horizontal_accuracy,
+        UAV->vertical_accuracy,
+        UAV->baro_accuracy,
+        UAV->speed_accuracy,
+        UAV->timestamp,
+        UAV->operator_location_type,
+        UAV->classification_type,
+        base_lat, base_lon,
+        UAV->area_count,
+        UAV->area_radius,
+        UAV->area_ceiling,
+        UAV->area_floor,
+        UAV->operator_altitude_geo,
+        UAV->system_timestamp,
+        UAV->operator_id_type,
+        strlen(UAV->op_id) > 0 ? UAV->op_id : "NONE"
+    );
 
-  Serial.print(json);
-  Serial.print("\r\n");
+    Serial.println(json);
 }
