@@ -39,6 +39,7 @@
 #include <nvs_flash.h>
 #include "opendroneid.h"
 #include "odid_wifi.h"
+#include <esp_timer.h>
 
 static ODID_UAS_Data UAS_data;
 
@@ -382,22 +383,28 @@ static void store_mac(struct uav_data *uav, uint8_t *payload)
 
 static void print_json(struct uav_data *UAV, int index)
 {
+  // Calculate uptime in seconds using esp_timer_get_time()
+  unsigned long uptime_seconds = esp_timer_get_time() / 1000000UL;
+
+  // Convert latitude and longitude to string with desired precision
   char lat[16], lon[16], op_lat[16], op_lon[16];
   dtostrf(UAV->lat_d, 11, 6, lat);
   dtostrf(UAV->long_d, 11, 6, lon);
   dtostrf(UAV->base_lat_d, 11, 6, op_lat);
   dtostrf(UAV->base_long_d, 11, 6, op_lon);
 
+  // Format the MAC address
   char mac_str[18];
   snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
            UAV->mac[0], UAV->mac[1], UAV->mac[2],
            UAV->mac[3], UAV->mac[4], UAV->mac[5]);
 
+  // Create the JSON string with the actual uptime
   char json[4096];
   snprintf(json, sizeof(json),
            "{"
            "\"index\": %d,"
-           "\"runtime\": 0,"
+           "\"runtime\": %lu,"
            "\"Basic ID\": {"
            "\"id\": \"%s\","
            "\"id_type\": \"Serial Number (ANSI/CTA-2063-A)\","
@@ -448,6 +455,7 @@ static void print_json(struct uav_data *UAV, int index)
            "}"
            "}",
            index,
+           uptime_seconds, // Actual uptime in seconds
            strlen(UAV->uav_id) > 0 ? UAV->uav_id : "NONE",
            UAV->ua_type,
            mac_str,
