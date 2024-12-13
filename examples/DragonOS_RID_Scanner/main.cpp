@@ -95,6 +95,10 @@ static void store_mac(struct uav_data *uav, uint8_t *payload);
 // Global counter for how many packets have been printed
 static int packetCount = 0;
 
+// Variables for periodic status messages
+unsigned long last_status = 0; // To track the last status message time
+unsigned long current_millis = 0; //To hold the current time in milliseconds
+
 static esp_err_t event_handler(void *ctx, system_event_t *event)
 {
   return ESP_OK;
@@ -123,6 +127,15 @@ void setup()
 void loop()
 {
   delay(10); // Small delay to keep the loop responsive
+
+  // Update the current time
+  current_millis = millis();
+
+  // Check if 60 seconds have passed since the last status message
+  if ((current_millis - last_status) > 60000UL) { // 60,000 milliseconds = 60 seconds
+    Serial.println( "Heartbeat: Device is active and running.");
+    last_status = current_millis;
+  }
 }
 
 static void callback(void *buffer, wifi_promiscuous_pkt_type_t type)
