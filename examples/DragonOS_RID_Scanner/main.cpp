@@ -34,12 +34,26 @@
 #endif
 
 #include <Arduino.h>
+#include <HardwareSerial.h>
 #include <esp_wifi.h>
 #include <esp_event_loop.h>
 #include <nvs_flash.h>
 #include "opendroneid.h"
 #include "odid_wifi.h"
 #include <esp_timer.h>
+#include <set>
+#include <string>
+
+const int SERIAL1_RX_PIN = 4;  // GPIO5 
+const int SERIAL1_TX_PIN = 5;  // GPIO4
+
+std::set<std::string> seen_macs;
+char last_mac[18] = {0};  // Store the last MAC we saw
+
+struct mac_time {
+    char mac[18];
+    unsigned long last_seen;
+} last_drone = {"", 0};
 
 static ODID_UAS_Data UAS_data;
 
@@ -105,14 +119,30 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
   return ESP_OK;
 }
 
+// ================================
+// Serial Configuration
+// ================================
+void initializeSerial() {
+    // Initialize USB Serial
+    Serial.begin(115200);
+    Serial.println("USB Serial started.");
+    Serial.println("Minimalist DJI WiFI Decoder Started...");
+
+    // Initialize Serial1 for UART (TX: D5, RX: D4) ---- NOTE ON XIAO WITH THIS INI MAPS TX TO 3 AND RX TO 4!
+    Serial1.begin(115200, SERIAL_8N1, SERIAL1_RX_PIN, SERIAL1_TX_PIN);
+    // Serial1.println("DEBUG: Serial1 started... Pin mapping --> RX 4/ TX 3");
+}
+
 void setup()
 {
-  setCpuFrequencyMhz(160);
-  Serial.begin(115200);
-  Serial.println("{ \"message\": \"Starting WarDragon minimalist ESP32 WiFi Remote ID Scanner\" }");
 
+  setCpuFrequencyMhz(160);
+  
   nvs_flash_init();
   tcpip_adapter_init();
+
+  initializeSerial();
+
   esp_event_loop_init(event_handler, NULL);
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -139,6 +169,31 @@ void loop()
   }
 }
 
+
+
+static void print_compact_message(struct uav_data *UAV) 
+{
+  char mac_str[18];
+  snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+            UAV->mac[0], UAV->mac[1], UAV->mac[2],
+            UAV->mac[3], UAV->mac[4], UAV->mac[5]);
+      
+      char mesh_msg[128];
+      snprintf(mesh_msg, sizeof(mesh_msg), 
+          "DRONE MAC:%s OP:%s LAT:%.6f LON:%.6f SPD:%d ALT:%d",
+          mac_str,
+          strlen(UAV->op_id) > 0 ? UAV->op_id : "UNKNOWN",
+          UAV->lat_d,
+          UAV->long_d,
+          UAV->speed, UAV->altitude_msl);
+      
+      Serial.println(mesh_msg);    
+      Serial1.println(mesh_msg);
+      Serial1.flush();
+
+      delay(500);
+}
+
 static void callback(void *buffer, wifi_promiscuous_pkt_type_t type)
 {
   if (type != WIFI_PKT_MGMT)
@@ -162,7 +217,7 @@ static void callback(void *buffer, wifi_promiscuous_pkt_type_t type)
     {
       parse_odid(&currentUAV, &UAS_data);
       packetCount++;
-      print_json(&currentUAV, packetCount);
+      print_compact_message(&currentUAV);
     }
   }
   else if (payload[0] == 0x80)
@@ -184,7 +239,7 @@ static void callback(void *buffer, wifi_promiscuous_pkt_type_t type)
         {
           parse_french_id(&currentUAV, &payload[offset]);
           packetCount++;
-          print_json(&currentUAV, packetCount);
+          print_compact_message(&currentUAV);
           printed = true;
         }
         // Check for ODID Wi-Fi beacon
@@ -199,7 +254,7 @@ static void callback(void *buffer, wifi_promiscuous_pkt_type_t type)
             odid_message_process_pack(&UAS_data, &payload[j], length - j);
             parse_odid(&currentUAV, &UAS_data);
             packetCount++;
-            print_json(&currentUAV, packetCount);
+            print_compact_message(&currentUAV);
             printed = true;
           }
         }
@@ -380,6 +435,7 @@ static void store_mac(struct uav_data *uav, uint8_t *payload)
   // This might differ depending on frame type, but for mgmt frames it's usually consistent.
   memcpy(uav->mac, &payload[10], 6);
 }
+
 
 static void print_json(struct uav_data *UAV, int index)
 {
