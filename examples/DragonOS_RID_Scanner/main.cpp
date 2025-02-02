@@ -47,14 +47,6 @@
 const int SERIAL1_RX_PIN = 4;  // GPIO5 
 const int SERIAL1_TX_PIN = 5;  // GPIO4
 
-std::set<std::string> seen_macs;
-char last_mac[18] = {0};  // Store the last MAC we saw
-
-struct mac_time {
-    char mac[18];
-    unsigned long last_seen;
-} last_drone = {"", 0};
-
 static ODID_UAS_Data UAS_data;
 
 // This struct holds the UAV data for a single decoded packet
@@ -160,39 +152,54 @@ void loop()
   delay(10); // Small delay to keep the loop responsive
 
   // Update the current time
-  current_millis = millis();
+  // current_millis = millis();
 
   // Check if 60 seconds have passed since the last status message
-  if ((current_millis - last_status) > 60000UL) { // 60,000 milliseconds = 60 seconds
-    Serial.println( "Heartbeat: Device is active and running.");
-    last_status = current_millis;
-  }
+  // if ((current_millis - last_status) > 60000UL) { // 60,000 milliseconds = 60 seconds
+  //   Serial.println( "Heartbeat: Device is active and running.");
+  //   last_status = current_millis;
+  // }
 }
-
-
 
 static void print_compact_message(struct uav_data *UAV) 
 {
-  char mac_str[18];
-  snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-            UAV->mac[0], UAV->mac[1], UAV->mac[2],
-            UAV->mac[3], UAV->mac[4], UAV->mac[5]);
-      
-      char mesh_msg[128];
-      snprintf(mesh_msg, sizeof(mesh_msg), 
-          "DRONE MAC:%s OP:%s LAT:%.6f LON:%.6f SPD:%d ALT:%d",
-          mac_str,
-          strlen(UAV->op_id) > 0 ? UAV->op_id : "UNKNOWN",
-          UAV->lat_d,
-          UAV->long_d,
-          UAV->speed, UAV->altitude_msl);
-      
-      Serial.println(mesh_msg);    
-      Serial1.println(mesh_msg);
-      Serial1.flush();
+    static unsigned long lastSendTime = 0;
+    const unsigned long sendInterval = 3500; // Limit messages (adjust as needed)
 
-      delay(500);
+    static struct uav_data lastUAV = {0}; // Store last sent values to detect changes
+
+    // Check for significant changes before sending
+    bool dataChanged = 
+        (strcmp(UAV->op_id, lastUAV.op_id) != 0) ||
+        (fabs(UAV->lat_d - lastUAV.lat_d) > 0.0001) ||
+        (fabs(UAV->long_d - lastUAV.long_d) > 0.0001) ||
+        (UAV->speed != lastUAV.speed) ||
+        (UAV->altitude_msl != lastUAV.altitude_msl);
+
+    if (dataChanged && millis() - lastSendTime >= sendInterval) {
+        lastSendTime = millis();
+        lastUAV = *UAV; // Update last known values
+
+        char mac_str[18];
+        snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+                 UAV->mac[0], UAV->mac[1], UAV->mac[2],
+                 UAV->mac[3], UAV->mac[4], UAV->mac[5]);
+
+        char mesh_msg[128];
+        snprintf(mesh_msg, sizeof(mesh_msg), 
+                 "DRONE MAC:%s OP:%s LAT:%.6f LON:%.6f SPD:%d ALT:%d",
+                 mac_str,
+                 (strlen(UAV->op_id) > 0) ? UAV->op_id : "UNKNOWN",
+                 UAV->lat_d,
+                 UAV->long_d,
+                 UAV->speed, UAV->altitude_msl);
+
+        if (Serial1.availableForWrite() >= strlen(mesh_msg)) {
+            Serial1.println(mesh_msg);
+        }
+    }
 }
+
 
 static void callback(void *buffer, wifi_promiscuous_pkt_type_t type)
 {
