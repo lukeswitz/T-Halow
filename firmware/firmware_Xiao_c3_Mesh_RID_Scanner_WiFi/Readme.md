@@ -24,37 +24,32 @@ All supported boards use these standard addresses:
 Use this command when flashing a board for the first time or completely reflashing:
 
 ```bash
-esptool.py --chip [chiptype] --port COM3 --baud 921600 \
---before default_reset --after hard_reset write_flash \
--z --flash_mode dio --flash_freq 80m \
-0x0 bootloader.bin 0x8000 partitions.bin 0x10000 firmware.bin
+esptool.py --chip [chiptype] --port COM3 --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 80m 0x0 bootloader.bin 0x8000 partitions.bin 0x10000 firmware.bin
 ```
 
-Replace [chiptype] with:
+Replace `[chiptype]` with:
 
 `esp32c3` for XIAO ESP32C3
 `esp32s3` for ESP32S3
 `esp32c6` for T-Halow
+- Or leave it out or use `auto` to let the tool detect it
 
 ## Firmware Update
 
 For updating only the firmware on an already configured board:
 ```bash
-esptool.py --chip [chiptype] --port COM3 --baud 921600 \
---before default_reset --after hard_reset write_flash \
--z --flash_mode dio --flash_freq 80m \
-0x10000 firmware.bin
-
+esptool.py --chip [chiptype] --port COM3 --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 80m 0x10000 firmware.bin
+```
 
 ### Parameters Explained
 
-`--chip`: Specifies the target ESP32 variant
-`--port`: Serial port (COM3, /dev/ttyUSB0, etc.)
-`--baud`: Data transfer rate (921600 recommended)
-`--before/--after`: Reset behavior
-`-z`: Automatically detect flash size
-`--flash_mode`: Flash interface mode (dio recommended)
-`--flash_freq`: Flash frequency (80m recommended)
+- `--chip`: Specifies the target ESP32 variant
+- `--port`: Serial port (COM3, /dev/ttyUSB0, etc.)
+- `--baud`: Data transfer rate (921600 recommended)
+- `--before/--after`: Reset behavior
+- `-z`: Automatically detect flash size
+- `--flash_mode`: Flash interface mode (dio recommended)
+- `--flash_freq`: Flash frequency (80m recommended)
 
 ## Troubleshooting
 
