@@ -53,6 +53,8 @@ static ODID_UAS_Data UAS_data;
 struct uav_data
 {
   uint8_t mac[6];
+  uint8_t padding[1];
+  int8_t rssi;  
   char op_id[ODID_ID_SIZE + 1];
   char uav_id[ODID_ID_SIZE + 1];
   double lat_d;
@@ -214,6 +216,7 @@ static void callback(void *buffer, wifi_promiscuous_pkt_type_t type)
   memset(&currentUAV, 0, sizeof(currentUAV));
 
   store_mac(&currentUAV, payload); // Store source MAC for fallback ID
+  currentUAV.rssi = packet->rx_ctrl.rssi; // Store RSSI
 
   static const uint8_t nan_dest[6] = {0x51, 0x6f, 0x9a, 0x01, 0x00, 0x00};
 
@@ -472,7 +475,8 @@ static void print_json(struct uav_data *UAV, int index)
            "\"id\": \"%s\","
            "\"id_type\": \"Serial Number (ANSI/CTA-2063-A)\","
            "\"ua_type\": %d,"
-           "\"MAC\": \"%s\""
+           "\"MAC\": \"%s\","
+           "\"RSSI\": %d"
            "},"
            "\"Location/Vector Message\": {"
            "\"latitude\": %s,"
@@ -522,6 +526,7 @@ static void print_json(struct uav_data *UAV, int index)
            strlen(UAV->uav_id) > 0 ? UAV->uav_id : "NONE",
            UAV->ua_type,
            mac_str,
+           UAV->rssi,
            lat,
            lon,
            UAV->speed,
