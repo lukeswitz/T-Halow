@@ -153,13 +153,13 @@ void loop()
   delay(10); // Small delay to keep the loop responsive
 
   // Update the current time
-  // current_millis = millis();
+  current_millis = millis();
 
   // Check if 60 seconds have passed since the last status message
-  // if ((current_millis - last_status) > 60000UL) { // 60,000 milliseconds = 60 seconds
-  //   Serial.println( "Heartbeat: Device is active and running.");
-  //   last_status = current_millis;
-  // }
+  if ((current_millis - last_status) > 60000UL) { // 60,000 milliseconds = 60 seconds
+    Serial.println( "Heartbeat: Device is active and running.");
+    last_status = current_millis;
+  }
 }
 
 static void print_compact_message(struct uav_data *UAV) 
