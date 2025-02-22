@@ -60,7 +60,12 @@ chmod +x flash_firmware.sh
    ```
  
 Follow the on-screen prompts. 
-That’s it! The script handles everything.
+That’s it! The script will get your board flashed and running. 
+
+## Troubleshooting
+
+- If your esp32 is not being detected or giving any errors, hold the boot button and plug in the device.
+- Make sure you are using a c3 esp32 module. 
 
 Credit: Firmware for RID and flasher based on work by cemaxecuter aka alphafox02. Modded with help of Colonel Panic. 
 
