@@ -1,28 +1,33 @@
-# Colonel Panic Mesh Board Flasher
-### WiFi Drone ID Detection FW
+# Colonel Panic FW Flasher Script
 
-This script automates the entire process of flashing firmware to the Colonel Panic Mesh Board.
+This script automates flashing WiFi Drone ID firmware to the Colonel Panic Mesh Board. 
 
-## What It Does
-- Clones `esptool` if not already installed  
-- Downloads the DJI firmware if missing  
-- Detects and lets you select the correct USB serial device  
-- Flashes the firmware to the ESP32-C3
+**[WiFi Drone ID Detection FW](https://github.com/lukeswitz/T-Halow/tree/wifi_rid_mesh/firmware/firmware_Xiao_c3_Mesh_RID_Scanner_WiFi)**
 
-## Get the Script
+
+Detected drone messages include ID, RSSI, MAC, Operator ID, Location and more.
+
+### Esptool Dependencies & Setup
 ```bash
-wget https://raw.githubusercontent.com/lukeswitz/T-Halow/refs/heads/wifi_rid_mesh/firmware/firmware_Xiao_c3_Mesh_RID_Scanner_WiFi/flashDJI.sh
+# Install required packages
+sudo apt-get update
+sudo apt-get install -y git python3 python3-pip wget
+
+# Install Python dependencies
+pip3 install esptool pyserial
 ```
 
-## How to Use  
-1. Give the script permission to run:  
-   ```bash
-   chmod +x flash_firmware.sh
-   ```
-  
-2. Run the script:
-   ```bash
-   ./flash_firmware.sh
+### Run & Flash
+
+```bash
+# Download the script
+wget https://raw.githubusercontent.com/lukeswitz/T-Halow/refs/heads/wifi_rid_mesh/firmware/firmware_Xiao_c3_Mesh_RID_Scanner_WiFi/flashDJI.sh
+
+# Make executable
+chmod +x flash_firmware.sh
+
+# Run the script
+./flash_firmware.sh
    ```
 
 Follow the on-screen prompts.
