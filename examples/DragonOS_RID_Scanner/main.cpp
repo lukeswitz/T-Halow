@@ -162,63 +162,62 @@ void loop()
   }
 }
 
-static void print_compact_message(struct uav_data *UAV) 
+static void print_compact_message(struct uav_data *UAV)
 {
     static unsigned long lastSendTime = 0;
-    const unsigned long sendInterval = 3500; // Limit messages
-    const int MAX_MESH_MSG_LEN = 256; // Adjust based on mesh network limitations
+    const unsigned long sendInterval = 3500;
+    const int MAX_MESH_SIZE = 230; // Leave room for mesh overhead
 
-    static struct uav_data lastUAV = {0}; 
-
-    // Same change detection logic
-    bool dataChanged = 
-        (strcmp(UAV->op_id, lastUAV.op_id) != 0) ||
-        (fabs(UAV->lat_d - lastUAV.lat_d) > 0.0001) ||
-        (fabs(UAV->long_d - lastUAV.long_d) > 0.0001) ||
-        (UAV->speed != lastUAV.speed) ||
-        (UAV->altitude_msl != lastUAV.altitude_msl);
-
-    if (dataChanged && millis() - lastSendTime >= sendInterval) {
+    if (millis() - lastSendTime >= sendInterval) {
         lastSendTime = millis();
-        lastUAV = *UAV;
 
-        // Precompute MAC address string
         char mac_str[18];
         snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-                 UAV->mac[0], UAV->mac[1], UAV->mac[2],
-                 UAV->mac[3], UAV->mac[4], UAV->mac[5]);
+            UAV->mac[0], UAV->mac[1], UAV->mac[2],
+            UAV->mac[3], UAV->mac[4], UAV->mac[5]);
 
-        char mesh_msg[MAX_MESH_MSG_LEN]; 
-        int msg_len = 0;
+        // Start with essential data
+        char mesh_msg[MAX_MESH_SIZE];
+        int msg_len = snprintf(mesh_msg, sizeof(mesh_msg), "DRONE");
 
-        // Start with core essential information
-        msg_len += snprintf(mesh_msg, sizeof(mesh_msg), 
-            "%s %s %s %.4f %.4f %d %d", 
-            mac_str, 
-            UAV->op_id[0] ? UAV->op_id : "-", 
-            UAV->uav_id[0] ? UAV->uav_id : "-", 
-            UAV->lat_d, 
-            UAV->long_d, 
-            UAV->speed, 
-            UAV->altitude_msl);
-
-        // Append additional fields if space allows
-        if (msg_len < MAX_MESH_MSG_LEN - 20) {
-            if (UAV->height_agl != 0) 
-                msg_len += snprintf(mesh_msg + msg_len, sizeof(mesh_msg) - msg_len, " H:%d", UAV->height_agl);
-            
-            if (msg_len < MAX_MESH_MSG_LEN - 20 && UAV->heading != 0) 
-                msg_len += snprintf(mesh_msg + msg_len, sizeof(mesh_msg) - msg_len, " HDG:%d", UAV->heading);
-            
-            if (msg_len < MAX_MESH_MSG_LEN - 20 && UAV->speed_vertical != 0) 
-                msg_len += snprintf(mesh_msg + msg_len, sizeof(mesh_msg) - msg_len, " VS:%d", UAV->speed_vertical);
+        // Priority 1: ID, Position, MAC, RSSI (most critical data)
+        if (strlen(UAV->uav_id) > 0) {
+            msg_len += snprintf(mesh_msg + msg_len, sizeof(mesh_msg) - msg_len,
+                " ID:%s", UAV->uav_id);
         }
 
-        // Send message if buffer has enough space
+        if (msg_len < MAX_MESH_SIZE && (UAV->lat_d != 0.0 || UAV->long_d != 0.0)) {
+            msg_len += snprintf(mesh_msg + msg_len, sizeof(mesh_msg) - msg_len,
+                " @%.6f/%.6f", UAV->lat_d, UAV->long_d);
+        }
+
+        if (msg_len < MAX_MESH_SIZE) {
+            msg_len += snprintf(mesh_msg + msg_len, sizeof(mesh_msg) - msg_len,
+                " MAC:%s RSSI:%d", mac_str, UAV->rssi);
+        }
+
+        // Priority 2: Op ID and Description
+        if (msg_len < MAX_MESH_SIZE && strlen(UAV->op_id) > 0) {
+            msg_len += snprintf(mesh_msg + msg_len, sizeof(mesh_msg) - msg_len,
+                " OP:%s", UAV->op_id);
+        }
+
+        if (msg_len < MAX_MESH_SIZE && strlen(UAV->description) > 0) {
+            msg_len += snprintf(mesh_msg + msg_len, sizeof(mesh_msg) - msg_len,
+                " DESC:%s", UAV->description);
+        }
+
+        // Priority 3: Add critical flight data if space permits
+        if (msg_len < MAX_MESH_SIZE && 
+            (UAV->speed != 0 || UAV->altitude_msl != 0 || UAV->heading != 0)) {
+            msg_len += snprintf(mesh_msg + msg_len, sizeof(mesh_msg) - msg_len,
+                " spd:%d alt:%d hdg:%d", 
+                UAV->speed, UAV->altitude_msl, UAV->heading);
+        }
+
         if (Serial1.availableForWrite() >= msg_len) {
             Serial1.println(mesh_msg);
         }
-
         Serial.println(mesh_msg);
     }
 }
