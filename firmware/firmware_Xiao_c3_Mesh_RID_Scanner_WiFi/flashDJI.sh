@@ -54,10 +54,6 @@ select device in $serial_devices; do
     fi
 done
 
-# Stop the zmq-decoder service if running (assuming systemd)
-echo "Stopping zmq-decoder service if running..."
-sudo systemctl stop "$SERVICE_NAME" || echo "$SERVICE_NAME is not running or could not be stopped."
-
 # Flash the firmware using esptool.py for the ESP32-C3
 echo "Flashing firmware to the device..."
 python3 esptool.py \
@@ -74,9 +70,4 @@ python3 esptool.py \
 
 echo "Firmware flashing complete."
 
-# Restart the zmq-decoder service
-echo "Starting zmq-decoder service..."
-sudo systemctl start "$SERVICE_NAME" || echo "$SERVICE_NAME could not be started."
-
-echo "Service restarted. Script complete."
 
