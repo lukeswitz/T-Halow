@@ -86,7 +86,7 @@ python3 esptool.py \
     write_flash -z \
     --flash_mode dio \
     --flash_freq 80m \
-    --flash_size 16MB \
+    --flash_size 4MB \
     0x10000 "$FIRMWARE_FILE"
 
 echo "Firmware flashing complete."
