@@ -1,4 +1,6 @@
-# Colonel Panic FW Flasher Script
+# Mesh Detect RID FW Flasher Script
+For the board by Colonel Panic:
+[Tindie](https://www.tindie.com/products/colonel_panic/mesh-detect-2/)
 
 This script automates flashing WiFi Drone ID firmware to the Colonel Panic Mesh Board. 
 
@@ -8,6 +10,14 @@ This script automates flashing WiFi Drone ID firmware to the Colonel Panic Mesh 
 Detected drone messages include ID, RSSI, MAC, Operator ID, Location and more.
 
 ### Esptool Dependencies & Setup
+
+#### Set the mesh device to use serial mode - configure the pins
+
+- Official Docs https://meshtastic.org/docs/configuration/module/serial/
+
+![image](https://github.com/user-attachments/assets/1fee0617-447a-454c-ac78-10243ec7da5c)
+
+
 ```bash
 # Install required packages
 sudo apt-get update
