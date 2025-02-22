@@ -3,10 +3,12 @@ set -e  # Exit immediately if a command exits with a non-zero status
 
 # Variables
 ESPTOOL_REPO="https://github.com/alphafox02/esptool"
-FIRMWARE_URL="https://github.com/lukeswitz/T-Halow/raw/refs/heads/wifi_rid_mesh/firmware/firmware_Xiao_s3andc3_Mesh_RID_Scanner_WiFi/dji_mesh_wifi_firmware.bin"
-FIRMWARE_FILE="dji_mesh_wifi_firmware.bin"
+FIRMWARE_OPTIONS=(
+    "WiFi Drone Detection:https://github.com/lukeswitz/T-Halow/raw/refs/heads/wifi_rid_mesh/firmware/firmware_Xiao_s3andc3_Mesh_RID_Scanner_WiFi/dji_mesh_wifi_firmware.bin"
+    "Device Detect:https://github.com/lukeswitz/esp32-oui-sniffer/raw/refs/heads/Xiao-esp32-c3-serial/build/meshdetect_privacy.bin"
+    "Deepwoods Baseline Scanner:https://github.com/lukeswitz/deepwoods_device_detection/raw/refs/heads/Xiao-esp-32-c3/build/esp32c3_device_fingerprint.bin"
+)
 ESPTOOL_DIR="esptool"
-SERVICE_NAME="zmq-decoder.service"
 
 # PlatformIO Config Values
 MONITOR_SPEED=115200
@@ -24,13 +26,32 @@ fi
 # Change to the esptool directory
 cd "$ESPTOOL_DIR"
 
-# Download the firmware if it doesn't already exist
-if [ ! -f "$FIRMWARE_FILE" ]; then
-    echo "Downloading firmware..."
-    wget "$FIRMWARE_URL" -O "$FIRMWARE_FILE"
-else
-    echo "Firmware file '$FIRMWARE_FILE' already exists. Skipping download."
-fi
+# Let user select firmware
+echo "Select firmware to flash:"
+select firmware_choice in "${FIRMWARE_OPTIONS[@]%%:*}"; do
+    if [ -n "$firmware_choice" ]; then
+        # Find the corresponding URL for the selected firmware
+        for option in "${FIRMWARE_OPTIONS[@]}"; do
+            if [[ "$option" == "$firmware_choice:"* ]]; then
+                FIRMWARE_URL="${option#*:}"
+                FIRMWARE_FILE=$(basename "$FIRMWARE_URL")
+                break
+            fi
+        done
+        
+        # Download the firmware if it doesn't already exist
+        if [ ! -f "$FIRMWARE_FILE" ]; then
+            echo "Downloading $firmware_choice firmware..."
+            wget "$FIRMWARE_URL" -O "$FIRMWARE_FILE"
+        else
+            echo "Firmware file '$FIRMWARE_FILE' already exists. Skipping download."
+        fi
+        
+        break
+    else
+        echo "Invalid selection. Please try again."
+    fi
+done
 
 # Find available USB serial devices (limit to recognized USB serial ports)
 echo "Searching for USB serial devices..."
@@ -55,7 +76,7 @@ select device in $serial_devices; do
 done
 
 # Flash the firmware using esptool.py for the ESP32-C3
-echo "Flashing firmware to the device..."
+echo "Flashing $firmware_choice firmware to the device..."
 python3 esptool.py \
     --chip esp32c3 \
     --port "$ESP32_PORT" \
@@ -69,5 +90,3 @@ python3 esptool.py \
     0x10000 "$FIRMWARE_FILE"
 
 echo "Firmware flashing complete."
-
-
