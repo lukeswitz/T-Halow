@@ -38,12 +38,12 @@ For WiFi drone detection follow the instructions below. *Prebuilt binaries comin
 wget https://raw.githubusercontent.com/lukeswitz/T-Halow/refs/heads/wifi_rid_mesh/firmware/firmware_Xiao_c3_Mesh_RID_Scanner_WiFi/flashDJI.sh
 
 # Make executable
-chmod +x flash_firmware.sh
-
-# Plug in your esp32
+chmod +x flashDJI.sh
+```
+- Plug in your esp32
 
 # Run the script
-./flash_firmware.sh
+./flashDJI.sh
    ```
  
 Follow the on-screen prompts. 
