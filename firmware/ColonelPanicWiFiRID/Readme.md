@@ -43,6 +43,7 @@ chmod +x flashDJI.sh
 - Plug in your esp32
 
 # Run the script
+  ```
 ./flashDJI.sh
    ```
  
