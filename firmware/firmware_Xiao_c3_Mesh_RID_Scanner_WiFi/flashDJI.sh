@@ -15,6 +15,28 @@ MONITOR_SPEED=115200
 UPLOAD_SPEED=115200
 ESP32_PORT=""
 
+# Function to find serial devices
+find_serial_devices() {
+    local devices=""
+    
+    # Check by-id path first (most reliable)
+    if [ -d "/dev/serial/by-id" ]; then
+        devices=$(ls /dev/serial/by-id/*)
+    fi
+    
+    # Check by-path as fallback
+    if [ -z "$devices" ] && [ -d "/dev/serial/by-path" ]; then
+        devices=$(ls /dev/serial/by-path/*)
+    fi
+    
+    # Fallback to traditional methods for macOS and other systems
+    if [ -z "$devices" ]; then
+        devices=$(ls /dev/cu.* /dev/tty.* 2>/dev/null | grep -i -E 'usb|serial')
+    fi
+    
+    echo "$devices"
+}
+
 # Clone the esptool repository if it doesn't already exist
 if [ ! -d "$ESPTOOL_DIR" ]; then
     echo "Cloning esptool repository..."
@@ -53,10 +75,9 @@ select firmware_choice in "${FIRMWARE_OPTIONS[@]%%:*}"; do
     fi
 done
 
-# Find available USB serial devices (limit to recognized USB serial ports)
+# Find available USB serial devices
 echo "Searching for USB serial devices..."
-serial_devices=$(ls /dev/cu.* /dev/tty.* 2>/dev/null)
-serial_devices=$(echo "$serial_devices" | grep -i -E 'usb|serial')
+serial_devices=$(find_serial_devices)
 
 if [ -z "$serial_devices" ]; then
     echo "No USB serial devices found. Exiting."
