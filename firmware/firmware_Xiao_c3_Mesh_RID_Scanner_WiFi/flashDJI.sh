@@ -19,37 +19,76 @@ ESP32_PORT=""
 find_serial_devices() {
     local devices=""
     
-    # Check by-id path first (most reliable)
-    if [ -d "/dev/serial/by-id" ]; then
-        devices=$(ls /dev/serial/by-id/*)
-    fi
-    
-    # Check by-path as fallback
-    if [ -z "$devices" ] && [ -d "/dev/serial/by-path" ]; then
-        devices=$(ls /dev/serial/by-path/*)
-    fi
-    
-    # Fallback to traditional methods for macOS and other systems
-    if [ -z "$devices" ]; then
-        devices=$(ls /dev/cu.* /dev/tty.* 2>/dev/null | grep -i -E 'usb|serial')
+    # Linux devices
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        # Try physical devices first
+        devices=$(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true)
+        
+        # If no devices found, try by-id paths
+        if [ -z "$devices" ] && [ -d "/dev/serial/by-id" ]; then
+            devices=$(ls /dev/serial/by-id/* 2>/dev/null || true)
+        fi
+        
+        # If still no devices, try by-path
+        if [ -z "$devices" ] && [ -d "/dev/serial/by-path" ]; then
+            devices=$(ls /dev/serial/by-path/* 2>/dev/null || true)
+        fi
+    # macOS devices
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        # On macOS, prefer /dev/cu.* over /dev/tty.* as they work better for flashing
+        devices=$(ls /dev/cu.* 2>/dev/null | grep -i -E 'usb|serial|usbmodem' || true)
     fi
     
     echo "$devices"
 }
+
+# Function to stop services if on Linux
+stop_services() {
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        echo "Checking for running services that might interfere..."
+        if command -v systemctl &> /dev/null; then
+            if systemctl is-active --quiet zmq-decoder.service; then
+                echo "Stopping zmq-decoder service..."
+                sudo systemctl stop zmq-decoder.service
+            else
+                echo "zmq-decoder.service is not running."
+            fi
+        else
+            echo "systemctl not found. Skipping service management."
+        fi
+    fi
+}
+
+# Clear screen for better UX
+clear
+
+echo "==================================================="
+echo "ESP32 Firmware Flasher Tool"
+echo "==================================================="
 
 # Clone the esptool repository if it doesn't already exist
 if [ ! -d "$ESPTOOL_DIR" ]; then
     echo "Cloning esptool repository..."
     git clone "$ESPTOOL_REPO"
 else
-    echo "Directory '$ESPTOOL_DIR' already exists. Skipping clone."
+    echo "Directory '$ESPTOOL_DIR' already exists."
 fi
 
 # Change to the esptool directory
 cd "$ESPTOOL_DIR"
 
-# Let user select firmware
-echo "Select firmware to flash:"
+# Display firmware options and prompt user
+echo ""
+echo "==================================================="
+echo "Available firmware options:"
+echo "==================================================="
+for i in "${!FIRMWARE_OPTIONS[@]}"; do
+    echo "$((i+1)). ${FIRMWARE_OPTIONS[$i]%%:*}"
+done
+echo ""
+
+# Let user select firmware with improved error handling
+PS3="Select firmware number to flash (1-${#FIRMWARE_OPTIONS[@]}): "
 select firmware_choice in "${FIRMWARE_OPTIONS[@]%%:*}"; do
     if [ -n "$firmware_choice" ]; then
         # Find the corresponding URL for the selected firmware
@@ -63,32 +102,40 @@ select firmware_choice in "${FIRMWARE_OPTIONS[@]%%:*}"; do
         
         # Download the firmware if it doesn't already exist
         if [ ! -f "$FIRMWARE_FILE" ]; then
+            echo ""
             echo "Downloading $firmware_choice firmware..."
             wget "$FIRMWARE_URL" -O "$FIRMWARE_FILE"
         else
-            echo "Firmware file '$FIRMWARE_FILE' already exists. Skipping download."
+            echo ""
+            echo "Firmware file '$FIRMWARE_FILE' already exists."
         fi
         
         break
     else
-        echo "Invalid selection. Please try again."
+        echo "Invalid selection. Please enter a number between 1 and ${#FIRMWARE_OPTIONS[@]}."
     fi
 done
 
 # Find available USB serial devices
+echo ""
 echo "Searching for USB serial devices..."
 serial_devices=$(find_serial_devices)
 
 if [ -z "$serial_devices" ]; then
-    echo "No USB serial devices found. Exiting."
+    echo "ERROR: No USB serial devices found."
+    echo "Please check your connection and try again."
     exit 1
 fi
 
 # Display serial devices and let user select one
+echo ""
+echo "==================================================="
 echo "Found USB serial devices:"
+echo "==================================================="
 select device in $serial_devices; do
     if [ -n "$device" ]; then
         ESP32_PORT="$device"
+        echo ""
         echo "Selected USB serial device: $ESP32_PORT"
         break
     else
@@ -96,7 +143,11 @@ select device in $serial_devices; do
     fi
 done
 
+# Stop any interfering services
+stop_services
+
 # Flash the firmware using esptool.py for the ESP32-C3
+echo ""
 echo "Flashing $firmware_choice firmware to the device..."
 python3 esptool.py \
     --chip esp32c3 \
@@ -110,4 +161,7 @@ python3 esptool.py \
     --flash_size 4MB \
     0x10000 "$FIRMWARE_FILE"
 
-echo "Firmware flashing complete."
+echo ""
+echo "==================================================="
+echo "Firmware flashing complete!"
+echo "==================================================="
