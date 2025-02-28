@@ -31,8 +31,6 @@ pip3 install esptool pyserial
 
 ### Flashing 
 
-For WiFi drone detection follow the instructions below. *Prebuilt binaries coming soon for OUI & Deepwoods FW.* 
-
 ```bash
 # Download the script
 wget https://raw.githubusercontent.com/lukeswitz/T-Halow/refs/heads/wifi_rid_mesh/firmware/firmware_Xiao_c3_Mesh_RID_Scanner_WiFi/flashDJI.sh
@@ -50,7 +48,10 @@ chmod +x flashDJI.sh
 Follow the on-screen prompts. 
 That’s it! The script will get your board flashed and running. 
 
-## Configure Mesh Nodes
+> [!IMPORTANT]
+> Power cycle the board after flashing to ensure no issues with the Heltec. 
+
+## Configure Mesh Node
 
 - Official Docs https://meshtastic.org/docs/configuration/module/serial/
 
