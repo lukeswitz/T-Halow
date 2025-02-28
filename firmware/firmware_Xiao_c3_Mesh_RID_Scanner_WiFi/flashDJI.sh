@@ -100,15 +100,9 @@ select firmware_choice in "${FIRMWARE_OPTIONS[@]%%:*}"; do
             fi
         done
         
-        # Download the firmware if it doesn't already exist
-        if [ ! -f "$FIRMWARE_FILE" ]; then
-            echo ""
-            echo "Downloading $firmware_choice firmware..."
-            wget "$FIRMWARE_URL" -O "$FIRMWARE_FILE"
-        else
-            echo ""
-            echo "Firmware file '$FIRMWARE_FILE' already exists."
-        fi
+        echo ""
+        echo "Downloading fresh $firmware_choice firmware..."
+        wget "$FIRMWARE_URL" -O "$FIRMWARE_FILE"
         
         break
     else
