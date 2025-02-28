@@ -1,4 +1,7 @@
 # Mesh Detect Flasher
+<p align="center">
+  <img src="https://raw.githubusercontent.com/lukeswitz/T-Halow/master/firmware/ColonelPanicWiFiRID/img/Ud4EHS01.svg" alt="T-Halow WiFi RID Image" width="100%" max-width="600px" />
+</p>
 
 **For the board by Colonel Panic:
 [Tindie](https://www.tindie.com/products/colonel_panic/mesh-detect-2/)**
