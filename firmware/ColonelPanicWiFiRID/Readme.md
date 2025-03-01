@@ -14,7 +14,7 @@ This script automates flashing different firmware to the Colonel Panic Mesh Dete
 Alert when specific OUI(s) is seen by the Bluetooth scanner. Flash via Aurduino IDE. 
   - [Privacy Version](https://github.com/lukeswitz/esp32-oui-sniffer/blob/Xiao-esp32-c3-serial/meshdetect%20_privacy.ino) with preset OUIs
 
-- [Deepwoods Device Detection](https://github.com/lukeswitz/deepwoods_device_detection/blob/Xiao-esp-32-c3/esp32c3_device_fingerprint.ino)
+- Beta: [Deepwoods Device Detection](https://github.com/lukeswitz/deepwoods_device_detection/blob/Xiao-esp-32-c3/esp32c3_device_fingerprint.ino)
 Scan WiFi and BT to form a baseline and alert to new devices. Flash via Aurduino IDE. 
 
 - [WiFi Drone ID Detection FW](https://github.com/lukeswitz/T-Halow/tree/wifi_rid_mesh/firmware/firmware_Xiao_c3_Mesh_RID_Scanner_WiFi)
