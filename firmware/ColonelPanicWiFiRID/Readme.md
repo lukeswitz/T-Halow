@@ -1,12 +1,13 @@
 # Mesh Detect Flasher  
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/lukeswitz/T-Halow/refs/heads/master/firmware/ColonelPanicWiFiRID/img/art_purps.svg" alt="T-Halow WiFi RID Image" width="100%" max-width="600px" />
+  <img src="https://raw.githubusercontent.com/lukeswitz/T-Halow/refs/heads/master/firmware/ColonelPanicWiFiRID/img/art_purps.svg" alt="T-Halow WiFi RID Image" width="70%" />
 </p>
 
 ## About  
 
-Easily flash different firmware onto the **Colonel Panic Mesh Detect** board.
+Easily flash different firmware onto the **Colonel Panic Mesh Detect** board
+`shasum 8c0380a2fc97396edd5feac0f9d3c771c8c518de`
 
 📌 **Buy the Board:** [Tindie](https://www.tindie.com/products/colonel_panic/mesh-detect-2/)  
 
@@ -14,24 +15,23 @@ Easily flash different firmware onto the **Colonel Panic Mesh Detect** board.
 
 ## 🔧 Mesh Detect Firmware Options  
 
-### 🛰 ESP32 OUI Sniffer  
-[🔗 Repo](https://github.com/colonelpanichacks/esp32-oui-sniffer/tree/Xiao-esp32-c3-serial)  
-✅ Detects specific **OUI(s)** via Bluetooth scanning.  
-✅ Alerts when targeted OUIs are detected.  
-✅ Flash via **Arduino IDE**.  
-🔒 [Privacy Version](https://github.com/lukeswitz/esp32-oui-sniffer/blob/Xiao-esp32-c3-serial/meshdetect%20_privacy.ino) with preset OUIs.  
+###  ESP32 OUI Sniffer  
+- [Official FW](https://github.com/colonelpanichacks/esp32-oui-sniffer/tree/Xiao-esp32-c3-serial)  
+- Detects specific **OUI(s)** via Bluetooth scanning.  
+- Alerts when targeted OUIs are detected.  
+- Flash via **Arduino IDE**.  
+
+🔒 [Privacy Version](https://github.com/lukeswitz/esp32-oui-sniffer/blob/Xiao-esp32-c3-serial/meshdetect%20_privacy.ino) with preset OUIs for Floc cameras, known snoops and other privacy invaders.
 
 ### 🌲 Deepwoods Device Detection  
-[🔗 Repo](https://github.com/lukeswitz/deepwoods_device_detection/blob/Xiao-esp-32-c3/esp32c3_device_fingerprint.ino)  
-✅ Scans WiFi & Bluetooth to form a baseline.  
-✅ Detects and alerts on **new** devices.  
-✅ Flash via **Arduino IDE**.  
+- [Beta FW](https://github.com/lukeswitz/deepwoods_device_detection/blob/Xiao-esp-32-c3/esp32c3_device_fingerprint.ino)  
+- Scans WiFi & Bluetooth to form a baseline.  
+- Detects and alerts on **new** devices.  
 
-### 🛸 WiFi Drone ID Detection FW  
-[🔗 Repo](https://github.com/lukeswitz/T-Halow/tree/wifi_rid_mesh/examples/DragonOS_RID_Scanner)  
-✅ Detects **WiFi RID drone signals**.  
-✅ Logs **ID, RSSI, MAC, Operator ID, Location**, and more.  
-✅ Flash via **Arduino IDE**.  
+### 🛸 WiFi Drone Scanner
+- [Beta FW](https://github.com/lukeswitz/T-Halow/tree/wifi_rid_mesh/examples/DragonOS_RID_Scanner)  
+- Detects **WiFi RID drone signals**.  
+- Logs **ID, RSSI, MAC, Operator ID, Location**, and more.  
 
 ### Esptool Dependencies & Setup
 
