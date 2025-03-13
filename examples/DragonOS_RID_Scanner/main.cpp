@@ -45,8 +45,8 @@
  #include <string>
  
  // Updated custom UART pin definitions to match proper serial messaging (RX=6, TX=7)
- const int SERIAL1_RX_PIN = 6;  // GPIO6
- const int SERIAL1_TX_PIN = 7;  // GPIO7
+ const int SERIAL1_RX_PIN = 7;  // GPIO7
+ const int SERIAL1_TX_PIN = 6;  // GPIO6
  
  static ODID_UAS_Data UAS_data;
  
