@@ -120,9 +120,6 @@ select device in $serial_devices; do
     fi
 done
 
-# Stop any interfering services
-stop_services
-
 # Flash the firmware using esptool.py for the ESP32-C3
 echo ""
 echo "Flashing $firmware_choice firmware to the device..."
