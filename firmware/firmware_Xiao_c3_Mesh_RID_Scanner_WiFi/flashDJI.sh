@@ -45,6 +45,12 @@ find_serial_devices() {
 # Clear screen for better UX
 clear
 
+echo "• ▌ ▄ ·.▄▄▄ .▄▄ · ▄ .·▄▄▄▄ ▄▄▄ ▄▄▄▄▄▄▄ .▄▄·▄▄▄▄▄"
+echo "·██ ▐███▀▄.▀▐█ ▀.██▪▐██▪ ██▀▄.▀•██ ▀▄.▀▐█ ▌•██  "
+echo "▐█ ▌▐▌▐█▐▀▀▪▄▀▀▀███▀▐▐█· ▐█▐▀▀▪▄▐█.▐▀▀▪██ ▄▄▐█.▪"
+echo "██ ██▌▐█▐█▄▄▐█▄▪▐██▌▐██. ██▐█▄▄▌▐█▌▐█▄▄▐███▌▐█▌·"
+echo "▀▀  █▪▀▀▀▀▀▀ ▀▀▀▀▀▀▀ ▀▀▀▀▀• ▀▀▀ ▀▀▀ ▀▀▀·▀▀▀ ▀▀▀"
+echo ""
 echo "==================================================="
 echo "MeshDetect Firmware Flasher"
 echo "==================================================="
@@ -65,15 +71,23 @@ echo ""
 echo "==================================================="
 echo "Available firmware options:"
 echo "==================================================="
+
+# Create array for user selection
+declare -a options_array
 for i in "${!FIRMWARE_OPTIONS[@]}"; do
     echo "$((i+1)). ${FIRMWARE_OPTIONS[$i]%%:*}"
+    options_array[i]="${FIRMWARE_OPTIONS[$i]%%:*}"
 done
 echo ""
 
-
-PS3="Select firmware number to flash (1-${#FIRMWARE_OPTIONS[@]}): "
-select firmware_choice in "${FIRMWARE_OPTIONS[@]%%:*}"; do
-    if [ -n "$firmware_choice" ]; then
+# Get user input directly instead of using select
+while true; do
+    read -p "Select firmware number to flash (1-${#FIRMWARE_OPTIONS[@]}): " choice
+    
+    # Validate input
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#FIRMWARE_OPTIONS[@]}" ]; then
+        firmware_choice="${options_array[$((choice-1))]}"
+        
         # Find the corresponding URL for the selected firmware
         for option in "${FIRMWARE_OPTIONS[@]}"; do
             if [[ "$option" == "$firmware_choice:"* ]]; then
@@ -104,19 +118,29 @@ if [ -z "$serial_devices" ]; then
     exit 1
 fi
 
-# Display serial devices and let user select one
+# Display serial devices
 echo ""
 echo "==================================================="
 echo "Found USB serial devices:"
 echo "==================================================="
-select device in $serial_devices; do
-    if [ -n "$device" ]; then
-        ESP32_PORT="$device"
+device_array=($serial_devices)
+for i in "${!device_array[@]}"; do
+    echo "$((i+1)). ${device_array[$i]}"
+done
+echo ""
+
+# Get user selection for device
+while true; do
+    read -p "Select USB serial device number (1-${#device_array[@]}): " device_choice
+    
+    # Validate input
+    if [[ "$device_choice" =~ ^[0-9]+$ ]] && [ "$device_choice" -ge 1 ] && [ "$device_choice" -le "${#device_array[@]}" ]; then
+        ESP32_PORT="${device_array[$((device_choice-1))]}"
         echo ""
         echo "Selected USB serial device: $ESP32_PORT"
         break
     else
-        echo "Invalid selection. Please try again."
+        echo "Invalid selection. Please enter a number between 1 and ${#device_array[@]}."
     fi
 done
 
