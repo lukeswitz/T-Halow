@@ -16,8 +16,8 @@
 #include <esp_timer.h>
 
 // Custom UART pin definitions for Serial1
-const int SERIAL1_RX_PIN = 7;  // GPIO7
-const int SERIAL1_TX_PIN = 6;  // GPIO6
+const int SERIAL1_RX_PIN = 7;  // GPIO4
+const int SERIAL1_TX_PIN = 6;  // GPIO5
 
 struct uav_data {
   uint8_t  mac[6];
@@ -177,10 +177,10 @@ public:
 
 void setup() {
   setCpuFrequencyMhz(160);
-  
+  esp_log_level_set("BLEScan", ESP_LOG_ERROR);  
   // Initialize serial ports
   Serial.begin(115200);
-  Serial1.begin(115200, SERIAL_8N1, SERIAL1_RX_PIN, SERIAL1_TX_PIN);
+  // Serial1.begin(115200, SERIAL_8N1, SERIAL1_RX_PIN, SERIAL1_TX_PIN); uncomment to use the mesh over serial function
   Serial.println("{ \"message\": \"Starting ESP32 WiFi/BLE Dual-Core Remote ID Scanner\" }");
   
   // Initialize WiFi in promiscuous mode
@@ -195,7 +195,7 @@ void setup() {
   esp_wifi_start();
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_promiscuous_rx_cb(&wifi_callback);
-  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE); // ch 1,6,11 and BT can overlap
   
   // Initialize BLE scanner
   BLEDevice::init("BLE RemoteID Scanner");
@@ -641,7 +641,7 @@ void bleScanTask(void *pvParameters) {
       if (uavs[i].flag) {
         packetCount++;
         print_json(&uavs[i], packetCount);
-        print_compact_message(&uavs[i]);
+        // print_compact_message(&uavs[i]);  uncomment to send to mesh
         uavs[i].flag = 0;
       }
     }
@@ -665,7 +665,7 @@ void wifiProcessTask(void *pvParameters) {
       if (uavs[i].flag) {
         packetCount++;
         print_json(&uavs[i], packetCount);
-        print_compact_message(&uavs[i]);
+        // print_compact_message(&uavs[i]);  uncomment to enable mesh messages over serial
         uavs[i].flag = 0;
       }
     }
