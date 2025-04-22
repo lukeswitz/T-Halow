@@ -1,4 +1,4 @@
-/* -*- tab-width: 2; mode: c++; -*-
+/* -*- tab-width: 2; mode: c; -*-
  *
  * Scanner for WiFi direct remote id.
  * Handles both opendroneid and French formats.
@@ -34,19 +34,12 @@
  #endif
  
  #include <Arduino.h>
- #include <HardwareSerial.h>
  #include <esp_wifi.h>
  #include <esp_event_loop.h>
  #include <nvs_flash.h>
  #include "opendroneid.h"
  #include "odid_wifi.h"
  #include <esp_timer.h>
- #include <set>
- #include <string>
- 
- // Updated custom UART pin definitions to match proper serial messaging (RX=6, TX=7)
- const int SERIAL1_RX_PIN = 6;  // GPIO6
- const int SERIAL1_TX_PIN = 7;  // GPIO7
  
  static ODID_UAS_Data UAS_data;
  
@@ -99,6 +92,7 @@
  static void callback(void *, wifi_promiscuous_pkt_type_t);
  static void parse_odid(struct uav_data *, ODID_UAS_Data *);
  static void parse_french_id(struct uav_data *, uint8_t *);
+ static void print_json(struct uav_data *uav, int index);
  static void store_mac(struct uav_data *uav, uint8_t *payload);
  
  // Global counter for how many packets have been printed
@@ -106,36 +100,21 @@
  
  // Variables for periodic status messages
  unsigned long last_status = 0; // To track the last status message time
- unsigned long current_millis = 0; // To hold the current time in milliseconds
+ unsigned long current_millis = 0; //To hold the current time in milliseconds
  
  static esp_err_t event_handler(void *ctx, system_event_t *event)
  {
    return ESP_OK;
  }
  
- // ================================
- // Serial Configuration
- // ================================
- void initializeSerial() {
-     // Initialize USB Serial
-     Serial.begin(115200);
-     Serial.println("USB Serial started.");
-     Serial.println("Minimalist DJI WiFI Decoder Started...");
- 
-     // Initialize Serial1 for custom UART messaging (TX: GPIO7, RX: GPIO6)
-     Serial1.begin(115200, SERIAL_8N1, SERIAL1_RX_PIN, SERIAL1_TX_PIN);
-     // Serial1.println("DEBUG: Serial1 started... Pin mapping --> RX 6/ TX 7");
- }
- 
  void setup()
  {
    setCpuFrequencyMhz(160);
-   
+   Serial.begin(115200);
+   Serial.println("{ \"message\": \"Starting WarDragon minimalist ESP32 WiFi Remote ID Scanner\" }");
+ 
    nvs_flash_init();
    tcpip_adapter_init();
- 
-   initializeSerial();
- 
    esp_event_loop_init(event_handler, NULL);
  
    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -157,118 +136,81 @@
  
    // Check if 60 seconds have passed since the last status message
    if ((current_millis - last_status) > 60000UL) { // 60,000 milliseconds = 60 seconds
-     Serial.println("Heartbeat: Device is active and running.");
+     Serial.println( "Heartbeat: Device is active and running.");
      last_status = current_millis;
    }
  }
  
- static void print_compact_message(struct uav_data *UAV)
- {
-     static unsigned long lastSendTime = 0;
-     const unsigned long sendInterval = 1500;  // Adjust to avoid spamming mesh
-     const int MAX_MESH_SIZE = 230;  // Avoid oversized messages
- 
-     if (millis() - lastSendTime < sendInterval) return;
-     lastSendTime = millis();
- 
-     char mac_str[18];
-     snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-              UAV->mac[0], UAV->mac[1], UAV->mac[2],
-              UAV->mac[3], UAV->mac[4], UAV->mac[5]);
- 
-     char mesh_msg[MAX_MESH_SIZE];
-     int msg_len = snprintf(mesh_msg, sizeof(mesh_msg), "DRONE MAC:%s RSSI:%d", mac_str, UAV->rssi);
- 
-     // Append location data only if it's valid
-     if (msg_len < MAX_MESH_SIZE && UAV->lat_d != 0.0 && UAV->long_d != 0.0) {
-         msg_len += snprintf(mesh_msg + msg_len, sizeof(mesh_msg) - msg_len,
-                             " @%.6f/%.6f", UAV->lat_d, UAV->long_d);
-     }
- 
-     // Append flight data only if space allows
-     if (msg_len < MAX_MESH_SIZE && UAV->speed > 0) {
-         msg_len += snprintf(mesh_msg + msg_len, sizeof(mesh_msg) - msg_len,
-                             " SPD:%d ALT:%d HDG:%d", UAV->speed, UAV->altitude_msl, UAV->heading);
-     }
- 
-     // **Send to Mesh Network via custom UART**
-     if (Serial1.availableForWrite() >= msg_len) {
-         Serial1.println(mesh_msg);  // Send over custom UART
-         Serial.println("Sent to mesh: ");  // USB Serial debug log
-         Serial.println(mesh_msg);
-     } else {
-         Serial.println("Mesh TX buffer full, message skipped.");
-     }
- }
- 
  static void callback(void *buffer, wifi_promiscuous_pkt_type_t type)
  {
-   if (type != WIFI_PKT_MGMT) return; // Only process management frames
+   if (type != WIFI_PKT_MGMT)
+     return; // We only care about management frames
  
    wifi_promiscuous_pkt_t *packet = (wifi_promiscuous_pkt_t *)buffer;
    uint8_t *payload = packet->payload;
    int length = packet->rx_ctrl.sig_len;
  
-   struct uav_data *currentUAV = (struct uav_data *)malloc(sizeof(struct uav_data));
-   if (!currentUAV) return; // Ensure memory allocation succeeds
+   struct uav_data currentUAV;
+   memset(&currentUAV, 0, sizeof(currentUAV));
  
-   memset(currentUAV, 0, sizeof(struct uav_data));
- 
-   store_mac(currentUAV, payload);
-   currentUAV->rssi = packet->rx_ctrl.rssi;
+   store_mac(&currentUAV, payload); // Store source MAC for fallback ID
+   currentUAV.rssi = packet->rx_ctrl.rssi; // Store RSSI
  
    static const uint8_t nan_dest[6] = {0x51, 0x6f, 0x9a, 0x01, 0x00, 0x00};
  
-   if (memcmp(nan_dest, &payload[4], 6) == 0) 
+   // If it's a NAN action frame (OpenDroneID)
+   if (memcmp(nan_dest, &payload[4], 6) == 0)
    {
-     if (odid_wifi_receive_message_pack_nan_action_frame(&UAS_data, (char *)currentUAV->op_id, payload, length) == 0) 
+     if (odid_wifi_receive_message_pack_nan_action_frame(&UAS_data, (char *)currentUAV.op_id, payload, length) == 0)
      {
-       parse_odid(currentUAV, &UAS_data);
+       parse_odid(&currentUAV, &UAS_data);
        packetCount++;
-       print_compact_message(currentUAV);
+       print_json(&currentUAV, packetCount);
      }
-   } 
-   else if (payload[0] == 0x80) 
+   }
+   else if (payload[0] == 0x80)
    {
+     // Beacon frame
      int offset = 36;
      bool printed = false;
  
-     while (offset < length) 
+     while (offset < length)
      {
        int typ = payload[offset];
        int len = payload[offset + 1];
        uint8_t *val = &payload[offset + 2];
  
-       if (!printed) 
+       if (!printed)
        {
-         if ((typ == 0xdd) && (val[0] == 0x6a) && (val[1] == 0x5c) && (val[2] == 0x35)) 
+         // Check for French format
+         if ((typ == 0xdd) && (val[0] == 0x6a) && (val[1] == 0x5c) && (val[2] == 0x35))
          {
-           parse_french_id(currentUAV, &payload[offset]);
+           parse_french_id(&currentUAV, &payload[offset]);
            packetCount++;
-           print_compact_message(currentUAV);
+           print_json(&currentUAV, packetCount);
            printed = true;
-         } 
+         }
+         // Check for ODID Wi-Fi beacon
          else if ((typ == 0xdd) &&
                   (((val[0] == 0x90 && val[1] == 0x3a && val[2] == 0xe6)) ||
-                   ((val[0] == 0xfa && val[1] == 0x0b && val[2] == 0xbc)))) 
+                   ((val[0] == 0xfa && val[1] == 0x0b && val[2] == 0xbc))))
          {
            int j = offset + 7;
-           if (j < length) 
+           if (j < length)
            {
              memset(&UAS_data, 0, sizeof(UAS_data));
              odid_message_process_pack(&UAS_data, &payload[j], length - j);
-             parse_odid(currentUAV, &UAS_data);
+             parse_odid(&currentUAV, &UAS_data);
              packetCount++;
-             print_compact_message(currentUAV);
+             print_json(&currentUAV, packetCount);
              printed = true;
            }
          }
        }
+ 
        offset += len + 2;
      }
    }
- 
-   free(currentUAV); // Free memory to prevent leaks
  }
  
  static void parse_odid(struct uav_data *UAV, ODID_UAS_Data *UAS_data2)
@@ -442,3 +384,121 @@
    memcpy(uav->mac, &payload[10], 6);
  }
  
+ static void print_json(struct uav_data *UAV, int index)
+ {
+   // Calculate uptime in seconds using esp_timer_get_time()
+   unsigned long uptime_seconds = esp_timer_get_time() / 1000000UL;
+ 
+   // Convert latitude and longitude to string with desired precision
+   char lat[16], lon[16], op_lat[16], op_lon[16];
+   dtostrf(UAV->lat_d, 11, 6, lat);
+   dtostrf(UAV->long_d, 11, 6, lon);
+   dtostrf(UAV->base_lat_d, 11, 6, op_lat);
+   dtostrf(UAV->base_long_d, 11, 6, op_lon);
+ 
+   // Format the MAC address
+   char mac_str[18];
+   snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+            UAV->mac[0], UAV->mac[1], UAV->mac[2],
+            UAV->mac[3], UAV->mac[4], UAV->mac[5]);
+ 
+   // Create the JSON string with the actual uptime
+   char json[4096];
+   snprintf(json, sizeof(json),
+            "{"
+            "\"index\": %d,"
+            "\"runtime\": %lu,"
+            "\"Basic ID\": {"
+            "\"id\": \"%s\","
+            "\"id_type\": \"Serial Number (ANSI/CTA-2063-A)\","
+            "\"ua_type\": %d,"
+            "\"MAC\": \"%s\","
+            "\"RSSI\": %d"
+            "},"
+            "\"Location/Vector Message\": {"
+            "\"latitude\": %s,"
+            "\"longitude\": %s,"
+            "\"speed\": %d,"
+            "\"vert_speed\": %d,"
+            "\"geodetic_altitude\": %d,"
+            "\"height_agl\": %d,"
+            "\"status\": %d,"
+            "\"direction\": %d,"
+            "\"alt_pressure\": %d,"
+            "\"height_type\": %d,"
+            "\"horiz_acc\": %d,"
+            "\"vert_acc\": %d,"
+            "\"baro_acc\": %d,"
+            "\"speed_acc\": %d,"
+            "\"timestamp\": %d"
+            "},"
+            "\"Self-ID Message\": {"
+            "\"text\": \"UAV %s operational\","
+            "\"description_type\": %d,"
+            "\"description\": \"%s\""
+            "},"
+            "\"System Message\": {"
+            "\"latitude\": %s,"
+            "\"longitude\": %s,"
+            "\"operator_lat\": %s,"
+            "\"operator_lon\": %s,"
+            "\"area_count\": %d,"
+            "\"area_radius\": %d,"
+            "\"area_ceiling\": %d,"
+            "\"area_floor\": %d,"
+            "\"operator_alt_geo\": %d,"
+            "\"classification\": %d,"
+            "\"timestamp\": %d"
+            "},"
+            "\"Auth Message\": {"
+            "\"type\": %d,"
+            "\"page\": %d,"
+            "\"length\": %d,"
+            "\"timestamp\": %d,"
+            "\"data\": \"%s\""
+            "}"
+            "}",
+            index,
+            uptime_seconds, // Actual uptime in seconds
+            strlen(UAV->uav_id) > 0 ? UAV->uav_id : "NONE",
+            UAV->ua_type,
+            mac_str,
+            UAV->rssi,
+            lat,
+            lon,
+            UAV->speed,
+            UAV->speed_vertical,
+            UAV->altitude_msl,
+            UAV->height_agl,
+            UAV->status,
+            UAV->heading,
+            UAV->altitude_pressure,
+            UAV->height_type,
+            UAV->horizontal_accuracy,
+            UAV->vertical_accuracy,
+            UAV->baro_accuracy,
+            UAV->speed_accuracy,
+            UAV->timestamp,
+            mac_str,
+            UAV->desc_type,
+            UAV->description,
+            lat,
+            lon,
+            op_lat,
+            op_lon,
+            UAV->area_count,
+            UAV->area_radius,
+            UAV->area_ceiling,
+            UAV->area_floor,
+            UAV->operator_altitude_geo,
+            UAV->classification_type,
+            UAV->system_timestamp,
+            UAV->auth_type,
+            UAV->auth_page,
+            UAV->auth_length,
+            UAV->auth_timestamp,
+            UAV->auth_data);
+ 
+   Serial.print(json);
+   Serial.print("\r\n");
+ }
