@@ -243,26 +243,39 @@ static void wifi_callback(void *buffer, wifi_promiscuous_pkt_type_t type) {
   wifi_promiscuous_pkt_t *packet = (wifi_promiscuous_pkt_t *)buffer;
   uint8_t *payload = packet->payload;
   int length = packet->rx_ctrl.sig_len;
+
+  // Bail out on empty or too-short frames
+  if (length <= 0 || length < 10) {
+    return;
+  }
   
   // Check for NAN action frame (OpenDroneID)
-  static const uint8_t nan_dest[6] = {0x51, 0x6f, 0x9a, 0x01, 0x00, 0x00};
+  static const uint8_t nan_dest[6] = { 0x51, 0x6f, 0x9a, 0x01, 0x00, 0x00 };
   if (memcmp(nan_dest, &payload[4], 6) == 0) {
-    if (odid_wifi_receive_message_pack_nan_action_frame(&UAS_data, nullptr, payload, length) == 0) {
-      uav_data UAV;
-      memset(&UAV, 0, sizeof(UAV));
-      memcpy(UAV.mac, &payload[10], 6);
-      UAV.rssi = packet->rx_ctrl.rssi;
-      UAV.last_seen = millis();
-      
-      // Extract data from UAS_data
-      parse_odid(&UAV, &UAS_data);
-      
-      // Store in database
-      uav_data* dbUAV = next_uav(UAV.mac);
-      memcpy(dbUAV, &UAV, sizeof(UAV));
-      dbUAV->flag = 1;
-    }
+      // reserve a 6-byte buffer of type char for the parser
+      char mac_buf[6] = { 0 };
+      if (odid_wifi_receive_message_pack_nan_action_frame(
+             &UAS_data,
+              mac_buf,
+              payload,
+              length
+          ) == 0) {
+
+          uav_data UAV;
+          memset(&UAV, 0, sizeof(UAV));
+          memcpy(UAV.mac, reinterpret_cast<uint8_t*>(mac_buf), 6);
+          UAV.rssi      = packet->rx_ctrl.rssi;
+          UAV.last_seen = millis();
+
+          parse_odid(&UAV, &UAS_data);
+
+          // Store/update in DB
+          uav_data* dbUAV = next_uav(UAV.mac);
+          memcpy(dbUAV, &UAV, sizeof(UAV));
+          dbUAV->flag = 1;
+      }
   }
+
   // Check for beacon frames (WiFi beacons)
   else if (payload[0] == 0x80) {
     int offset = 36;
