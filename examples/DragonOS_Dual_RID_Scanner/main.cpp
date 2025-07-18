@@ -16,8 +16,8 @@
 #include <esp_timer.h>
 
 // Custom UART pin definitions for Serial1
-const int SERIAL1_RX_PIN = 7;  // GPIO4
-const int SERIAL1_TX_PIN = 6;  // GPIO5
+const int SERIAL1_RX_PIN = 4;  // GPIO4
+const int SERIAL1_TX_PIN = 5;  // GPIO5
 
 struct uav_data {
   uint8_t  mac[6];
@@ -654,7 +654,7 @@ void bleScanTask(void *pvParameters) {
       if (uavs[i].flag) {
         packetCount++;
         print_json(&uavs[i], packetCount);
-        // print_compact_message(&uavs[i]);  uncomment to send to mesh
+         print_compact_message(&uavs[i]);
         uavs[i].flag = 0;
       }
     }
