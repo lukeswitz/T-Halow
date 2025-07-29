@@ -32,12 +32,10 @@ Modify and build yourself, or flash an existing binary file above:
    ```
 
 ## Usage 
-![image](https://github.com/user-attachments/assets/0a5a70b2-82d3-40b7-9c55-d1092cd6f249)
-
 
 **Default WiFi AP Credentials**
 
-AP: `Wardragon-Scanner`
+AP: `WarDragon-Scanner`
 
 PW: `wardragon123`
 
