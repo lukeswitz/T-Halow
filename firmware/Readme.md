@@ -1,9 +1,6 @@
 # WarDragon Scanner 
 _**A standalone ESP32 WiFi Remote ID Scanner with ZMQ Publisher**_
 
-
-
-
 **Files/Currently Supported Boards:**
    - `tHalow_WiFi_AP_RID_firmware.bin`
    - `xiao_s3_WiFi_AP_RID_firmware.bin`
@@ -16,7 +13,10 @@ Made for [DragonSync iOS & macOS](https://github.com/Root-Down-Digital/DragonSyn
 Modify and build yourself, or flash an existing binary file listed above:
 
 ### Flash Precompiled Binary
-- Use default credentials, flash precompiled binary with `esptool.py`
+- Download the firmware for your board above
+- Flash precompiled binary with `esptool.py`
+
+  (Uses default credentials for the AP. Build from source to change)
 
    ```
   esptool.py --chip auto --port /dev/yourportname --baud 115200 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 80m --flash_size detect 0x10000 firmwareFile.bin
