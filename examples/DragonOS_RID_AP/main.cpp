@@ -219,7 +219,7 @@ static String create_status_json() {
   json += "\"uptime\":" + String(uptime_seconds) + ",";
   json += "\"esp32_temperature_c\":" + String(esp32_temp_c, 1) + ",";
   json += "\"esp32_temperature_f\":" + String(esp32_temp_f, 1) + ",";
-  json += "\"temperature\":" + String(esp32_temp_f, 1) + ",";  // for the app to grab temp
+  json += "\"temperature\":" + String(esp32_temp_c, 1) + ",";  // for the app to grab temp
   json += "\"packet_count\":" + String(packetCount) + ",";
   json += "\"cpu_freq\":" + String(ESP.getCpuFreqMHz()) + ",";
   json += "\"flash_size\":" + String(ESP.getFlashChipSize() / 1024) + ",";
