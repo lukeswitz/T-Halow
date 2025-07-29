@@ -9,7 +9,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <esp_timer.h>
-#include <WiFiUdp.h>
+#include <WiFiServer.h>
+#include <WiFiClient.h>
 #include "opendroneid.h"
 #include "odid_wifi.h"
 
@@ -62,21 +63,19 @@ const char* ap_ssid = "WarDragon-Scanner";
 const char* ap_password = "wardragon123";
 
 WebServer server(80);
-WiFiUDP udpTelemetry;
-WiFiUDP udpStatus;
-
-IPAddress multicastIP(239, 2, 3, 1);
-const int telemetryPort = 4224;
-const int statusPort = 4225;
+WiFiServer telemetryServer(4224);
 
 TaskHandle_t ScannerTask;
 TaskHandle_t WebServerTask;
-TaskHandle_t MulticastTask;
+TaskHandle_t ZMQTask;
 
 static String latestDroneData = "";
 static int packetCount = 0;
 static unsigned long last_status = 0;
 static SemaphoreHandle_t dataMutex;
+
+std::vector<WiFiClient> telemetryClients;
+static SemaphoreHandle_t clientMutex;
 
 static esp_err_t scanner_event_handler(void *, system_event_t *);
 static void callback(void *, wifi_promiscuous_pkt_type_t);
@@ -84,109 +83,195 @@ static void parse_odid(struct uav_data *, ODID_UAS_Data *);
 static void parse_french_id(struct uav_data *, uint8_t *);
 static void store_mac(struct uav_data *uav, uint8_t *payload);
 static String create_json_response(struct uav_data *UAV, int index);
-static String create_cot_xml(struct uav_data *UAV, int index);
 static void update_latest_data(struct uav_data *UAV, int index);
-static void publishMulticast(const String& data, bool isStatus);
+static void publishToZMQClients(const String& data, bool isStatus);
 static String create_status_json();
-static String create_status_cot();
+static void sendZMTPGreeting(WiFiClient& client);
+static void sendZMTPMessage(WiFiClient& client, const String& message);
+static void publishToZMTPClients(const String& data);
+static float getESP32Temperature();
+static String create_status_json();
+WiFiServer statusServer(4225);
+TaskHandle_t StatusTask;
 
-void MulticastTaskCode(void *pvParameters) {
-  Serial.println("Multicast task starting on core " + String(xPortGetCoreID()));
+void ZMQTaskCode(void *pvParameters) {
+  Serial.println("ZMTP task starting on core " + String(xPortGetCoreID()));
   
-  // Initialize UDP for multicast
-  udpTelemetry.begin(telemetryPort);
-  udpStatus.begin(statusPort);
+  clientMutex = xSemaphoreCreateMutex();
   
-  Serial.println("Multicast servers started");
-  Serial.println("Telemetry multicast: " + multicastIP.toString() + ":" + String(telemetryPort));
-  Serial.println("Status multicast: " + multicastIP.toString() + ":" + String(statusPort));
+  telemetryServer.begin();
+  telemetryServer.setNoDelay(true);
+  
+  Serial.println("ZMTP telemetry server started on port 4224");
   
   unsigned long lastStatusPublish = 0;
   
   for(;;) {
-    unsigned long currentTime = millis();
+    WiFiClient newTelemetryClient = telemetryServer.available();
+    if (newTelemetryClient) {
+      Serial.println("New telemetry client connected");
+      newTelemetryClient.setNoDelay(true);
+      sendZMTPGreeting(newTelemetryClient);
+      if (xSemaphoreTake(clientMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        telemetryClients.push_back(newTelemetryClient);
+        xSemaphoreGive(clientMutex);
+      }
+    }
+
+    // Clean up disconnected clients
+    if (xSemaphoreTake(clientMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+      for (auto it = telemetryClients.begin(); it != telemetryClients.end();) {
+        if (!it->connected()) {
+          it->stop();
+          it = telemetryClients.erase(it);
+          Serial.println("Telemetry client disconnected");
+        } else {
+          ++it;
+        }
+      }
+      xSemaphoreGive(clientMutex);
+    }
     
-    // Send status updates every 30 seconds
-    if (currentTime - lastStatusPublish > 30000) {
-      String statusCot = create_status_cot();
-      publishMulticast(statusCot, true);
+    unsigned long currentTime = millis();
+    if (currentTime - lastStatusPublish > 30000) {  // Every 30 seconds
+      String statusJson = create_status_json();
+      publishToZMTPClients(statusJson);  // Send esp32 system stats
       lastStatusPublish = currentTime;
     }
     
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }
 
-static void publishMulticast(const String& data, bool isStatus) {
-  WiFiUDP& udp = isStatus ? udpStatus : udpTelemetry;
-  int port = isStatus ? statusPort : telemetryPort;
+static void sendZMTPGreeting(WiFiClient& client) {
+  if (!client.connected()) return;
   
-  udp.beginPacket(multicastIP, port);
-  udp.print(data);
-  udp.endPacket();
-  
-  Serial.println("Sent " + String(isStatus ? "status" : "telemetry") + " multicast");
+  // ZMTP greeting: anonymous identity (empty string)
+  uint8_t greeting[2] = {0x01, 0x00}; // length=1, flags=0 (final frame)
+  client.write(greeting, 2);
+  client.flush();
 }
 
-static String create_status_cot() {
-  unsigned long uptime_seconds = esp_timer_get_time() / 1000000UL;
-  IPAddress ip = WiFi.softAPIP();
+static void sendZMTPMessage(WiFiClient& client, const String& message) {
+  if (!client.connected()) return;
   
-  String uid = "ESP32-WarDragon-" + WiFi.macAddress();
-  uid.replace(":", "");
+  uint32_t msgLen = message.length();
   
-  return "<?xml version=\"1.0\"?>\n"
-         "<event version=\"2.0\" uid=\"" + uid + "\" type=\"b-m-p-s-m\" time=\"" + String(uptime_seconds) + "\" start=\"" + String(uptime_seconds) + "\" stale=\"" + String(uptime_seconds + 300) + "\">\n"
-         "  <point lat=\"0.0\" lon=\"0.0\" hae=\"0.0\" ce=\"9999999\" le=\"9999999\"/>\n"
-         "  <detail>\n"
-         "    <track course=\"0.0\" speed=\"0.0\"/>\n"
-         "    <status readiness=\"true\"/>\n"
-         "    <remarks>ESP32 WarDragon Scanner - Packets: " + String(packetCount) + ", Memory: " + String(ESP.getFreeHeap()) + " bytes</remarks>\n"
-         "  </detail>\n"
-         "</event>\n";
+  // ZMTP frame format: [length][flags][body]
+  if (msgLen < 255) {
+    // Short frame: length as single byte
+    uint8_t shortLen = (uint8_t)(msgLen + 1); // +1 for flags byte
+    uint8_t flags = 0x00; // Final frame, no more frames
+    
+    client.write(&shortLen, 1);
+    client.write(&flags, 1);
+    client.write((const uint8_t*)message.c_str(), msgLen);
+  } else {
+    // Long frame: 0xFF + 8-byte length
+    uint8_t longMarker = 0xFF;
+    uint64_t longLen = msgLen + 1; // +1 for flags byte
+    uint8_t flags = 0x00; // Final frame
+    
+    client.write(&longMarker, 1);
+    
+    // Write 64-bit length in network byte order
+    for (int i = 7; i >= 0; i--) {
+      uint8_t byte = (longLen >> (i * 8)) & 0xFF;
+      client.write(&byte, 1);
+    }
+    
+    client.write(&flags, 1);
+    client.write((const uint8_t*)message.c_str(), msgLen);
+  }
+  
+  client.flush();
 }
 
-static String create_cot_xml(struct uav_data *UAV, int index) {
+static void publishToZMTPClients(const String& data) {
+  if (xSemaphoreTake(clientMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+    for (auto it = telemetryClients.begin(); it != telemetryClients.end();) {
+      if (it->connected()) {
+        sendZMTPMessage(*it, data);
+        ++it;
+      } else {
+        it->stop();
+        it = telemetryClients.erase(it);
+      }
+    }
+    xSemaphoreGive(clientMutex);
+  }
+}
+
+static String create_status_json() {
   unsigned long uptime_seconds = esp_timer_get_time() / 1000000UL;
+  float esp32_temp_c = getESP32Temperature();
+  float esp32_temp_f = (esp32_temp_c * 9.0/5.0) + 32.0;
   
-  char lat[16], lon[16], op_lat[16], op_lon[16];
-  dtostrf(UAV->lat_d, 11, 6, lat);
-  dtostrf(UAV->long_d, 11, 6, lon);
-  dtostrf(UAV->base_lat_d, 11, 6, op_lat);
-  dtostrf(UAV->base_long_d, 11, 6, op_lon);
+  String json = "{";
+  json += "\"serial_number\":\"ESP32-DragonScanner\",";
+  json += "\"system_stats\":{";
+  json += "\"memory\":{";
+  json += "\"total\":" + String(ESP.getHeapSize()) + ",";
+  json += "\"available\":" + String(ESP.getFreeHeap()) + ",";
+  json += "\"used\":" + String(ESP.getHeapSize() - ESP.getFreeHeap()) + ",";
+  json += "\"percent\":" + String((float)(ESP.getHeapSize() - ESP.getFreeHeap()) / ESP.getHeapSize() * 100.0, 1);
+  json += "},";
+  json += "\"uptime\":" + String(uptime_seconds) + ",";
+  json += "\"esp32_temperature_c\":" + String(esp32_temp_c, 1) + ",";
+  json += "\"esp32_temperature_f\":" + String(esp32_temp_f, 1) + ",";
+  json += "\"packet_count\":" + String(packetCount) + ",";
+  json += "\"cpu_freq\":" + String(ESP.getCpuFreqMHz()) + ",";
+  json += "\"flash_size\":" + String(ESP.getFlashChipSize() / 1024) + ",";
+  json += "\"sdk_version\":\"" + String(ESP.getSdkVersion()) + "\"";
+  json += "}";
+  json += "}";
   
-  char mac_str[18];
-  snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-           UAV->mac[0], UAV->mac[1], UAV->mac[2],
-           UAV->mac[3], UAV->mac[4], UAV->mac[5]);
+  return json;
+}
+
+void StatusTaskCode(void *pvParameters) {
+  Serial.println("Status server task starting on core " + String(xPortGetCoreID()));
   
-  String uid = "drone-" + String(mac_str);
-  uid.replace(":", "");
+  statusServer.begin();
+  statusServer.setNoDelay(true);
   
-  // Use drone coordinates if available, otherwise use 0,0
-  String droneLat = (UAV->lat_d != 0.0) ? String(lat) : "0.0";
-  String droneLon = (UAV->long_d != 0.0) ? String(lon) : "0.0";
-  String altitude = String(UAV->altitude_msl);
+  Serial.println("Status server started on port 4225");
   
-  String remarks = "Drone ID: " + String(UAV->uav_id) + 
-                  ", Operator: " + String(UAV->op_id) + 
-                  ", RSSI: " + String(UAV->rssi) + "dBm" +
-                  ", Speed: " + String(UAV->speed) + "m/s" +
-                  ", Heading: " + String(UAV->heading) + "°" +
-                  ", Description: " + String(UAV->description);
+  std::vector<WiFiClient> statusClients;
   
-  return "<?xml version=\"1.0\"?>\n"
-         "<event version=\"2.0\" uid=\"" + uid + "\" type=\"a-f-A-M-F-Q\" time=\"" + String(uptime_seconds) + "\" start=\"" + String(uptime_seconds) + "\" stale=\"" + String(uptime_seconds + 60) + "\">\n"
-         "  <point lat=\"" + droneLat + "\" lon=\"" + droneLon + "\" hae=\"" + altitude + "\" ce=\"30\" le=\"30\"/>\n"
-         "  <detail>\n"
-         "    <track course=\"" + String(UAV->heading) + "\" speed=\"" + String(UAV->speed) + "\"/>\n"
-         "    <contact endpoint=\"\" phone=\"\" callsign=\"drone-" + String(UAV->uav_id) + "\"/>\n"
-         "    <precisionlocation geopointsrc=\"GPS\" altsrc=\"GPS\"/>\n"
-         "    <color argb=\"-256\"/>\n"
-         "    <usericon iconsetpath=\"34ae1613-9645-4222-a9d2-e5f243dea2865/Military/UAV_quad.png\"/>\n"
-         "    <remarks>" + remarks + "</remarks>\n"
-         "  </detail>\n"
-         "</event>\n";
+  for(;;) {
+    // Accept new clients
+    WiFiClient newStatusClient = statusServer.available();
+    if (newStatusClient) {
+      Serial.println("New status client connected");
+      newStatusClient.setNoDelay(true);
+      sendZMTPGreeting(newStatusClient);
+      statusClients.push_back(newStatusClient);
+    }
+    
+    // Clean up disconnected clients
+    for (auto it = statusClients.begin(); it != statusClients.end();) {
+      if (!it->connected()) {
+        it->stop();
+        it = statusClients.erase(it);
+        Serial.println("Status client disconnected");
+      } else {
+        ++it;
+      }
+    }
+    
+    // Send status updates to all connected clients
+    if (!statusClients.empty()) {
+      String statusJson = create_status_json();
+      for (auto& client : statusClients) {
+        if (client.connected()) {
+          sendZMTPMessage(client, statusJson);
+        }
+      }
+    }
+    
+    vTaskDelay(pdMS_TO_TICKS(10000)); // Update status every 10 seconds
+  }
 }
 
 void ScannerTaskCode(void *pvParameters) {
@@ -222,73 +307,236 @@ void WebServerTaskCode(void *pvParameters) {
   Serial.println("Connect to WiFi: " + String(ap_ssid));
   Serial.println("Password: " + String(ap_password));
   Serial.println("Open browser to: http://" + IP.toString());
-  Serial.println("Multicast Telemetry: " + multicastIP.toString() + ":" + String(telemetryPort));
-  Serial.println("Multicast Status: " + multicastIP.toString() + ":" + String(statusPort));
+  Serial.println("ZMTP Telemetry: tcp://" + IP.toString() + ":4224");
   
   server.on("/", [](){
-    String html = R"rawliteral(
+String html = R"rawliteral(
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WarDragon Scanner</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            margin: 20px; 
-            background: #1a1a1a;
-            color: #00ff00;
+        :root {
+            --bg-color: #0a0a0a;
+            --text-color: #00ff41;
+            --accent-color: #00ff41;
+            --panel-bg: #111111;
+            --panel-border: #00ff41;
+            --header-color: #00ff41;
+            --data-color: #00ff41;
+            --warning-color: #ff3e3e;
         }
-        .container { 
-            max-width: 1200px; 
-            margin: 0 auto; 
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Courier New', monospace;
         }
-        .header { 
-            text-align: center; 
-            margin-bottom: 30px;
-            border-bottom: 2px solid #00ff00;
-            padding-bottom: 20px;
-        }
-        .multicast-info {
-            background: #2d2d2d;
+        
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
             padding: 20px;
-            border-radius: 8px;
-            border: 1px solid #00ff00;
+            line-height: 1.6;
+            background-image: 
+                radial-gradient(rgba(0, 255, 65, 0.1) 1px, transparent 1px),
+                radial-gradient(rgba(0, 255, 65, 0.1) 1px, transparent 1px);
+            background-size: 50px 50px;
+            background-position: 0 0, 25px 25px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 1px solid var(--accent-color);
+            padding-bottom: 15px;
+            position: relative;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+            text-shadow: 0 0 10px var(--accent-color);
+        }
+        
+        .header p {
+            font-size: 1rem;
+            opacity: 0.8;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
             margin-bottom: 20px;
         }
-        .stats { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
-            gap: 20px; 
-            margin-bottom: 30px; 
+        
+        .panel {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 4px;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0, 255, 65, 0.2);
+            position: relative;
+            overflow: hidden;
         }
-        .stat-box { 
-            background: #2d2d2d; 
-            padding: 20px; 
-            border-radius: 8px; 
-            border: 1px solid #00ff00;
+        
+        .panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent-color), transparent);
         }
-        .drone-data { 
-            background: #2d2d2d; 
-            padding: 20px; 
-            border-radius: 8px; 
-            border: 1px solid #00ff00;
-            white-space: pre-wrap; 
-            font-family: monospace; 
-            max-height: 500px; 
-            overflow-y: auto; 
+        
+        .panel h2 {
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid rgba(0, 255, 65, 0.3);
+            padding-bottom: 5px;
         }
-        .refresh-btn { 
-            background: #00aa00; 
-            color: white; 
-            border: none; 
-            padding: 10px 20px; 
-            border-radius: 5px; 
-            cursor: pointer; 
-            margin: 10px 0; 
+        
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 0.9rem;
         }
-        .refresh-btn:hover { 
-            background: #00ff00; 
+        
+        .stat-label {
+            opacity: 0.8;
+        }
+        
+        .stat-value {
+            font-weight: bold;
+        }
+        
+        .drone-data {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 4px;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            box-shadow: 0 0 10px rgba(0, 255, 65, 0.2);
+        }
+        
+        .drone-data::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .drone-data::-webkit-scrollbar-track {
+            background: var(--panel-bg);
+        }
+        
+        .drone-data::-webkit-scrollbar-thumb {
+            background-color: var(--accent-color);
+            border-radius: 4px;
+        }
+        
+        .button {
+            background-color: transparent;
+            color: var(--accent-color);
+            border: 1px solid var(--accent-color);
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.3s ease;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        
+        .button:hover {
+            background-color: var(--accent-color);
+            color: var(--bg-color);
+            box-shadow: 0 0 15px var(--accent-color);
+        }
+        
+        .connection-info {
+            margin-bottom: 20px;
+        }
+        
+        .connection-info h2 {
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .connection-detail {
+            display: flex;
+            margin-bottom: 10px;
+        }
+        
+        .connection-label {
+            width: 150px;
+            opacity: 0.8;
+        }
+        
+        .connection-value {
+            font-weight: bold;
+        }
+        
+        .blink {
+            animation: blink 1.5s infinite;
+        }
+        
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 10px;
+            background-color: var(--accent-color);
+            box-shadow: 0 0 10px var(--accent-color);
+        }
+        
+        .status-active {
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(0, 255, 65, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(0, 255, 65, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 255, 65, 0); }
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            font-size: 0.8rem;
+            opacity: 0.6;
+        }
+        
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
@@ -296,60 +544,162 @@ void WebServerTaskCode(void *pvParameters) {
     <div class="container">
         <div class="header">
             <h1>WarDragon Scanner</h1>
-            <p>ESP32 WiFi Remote ID Scanner with Multicast Publisher</p>
+            <p>ESP32 WiFi Remote ID to ZMQ</p>
         </div>
         
-        <div class="multicast-info">
-            <h3>Multicast Connection Info</h3>
-            <p><strong>Telemetry:</strong> 239.2.3.1:4242</p>
-            <p><strong>Status:</strong> 239.2.3.1:4243</p>
-            <p>Configure your app to use Multicast mode with these endpoints</p>
-        </div>
-        
-        <div class="stats">
-            <div class="stat-box">
-                <h3>Status</h3>
-                <p id="status">Active</p>
+        <div class="panel connection-info">
+            <h2>ZMQ Connection Info</h2>
+            <div class="connection-detail">
+                <div class="connection-label">IP Address:</div>
+                <div class="connection-value">192.168.4.1</div>
             </div>
-            <div class="stat-box">
-                <h3>Packets Detected</h3>
-                <p id="packets">Loading...</p>
+            <div class="connection-detail">
+                <div class="connection-label">Telemetry Port:</div>
+                <div class="connection-value">4224</div>
             </div>
-            <div class="stat-box">
-                <h3>Uptime</h3>
-                <p id="uptime">Loading...</p>
-            </div>
-            <div class="stat-box">
-                <h3>Free Memory</h3>
-                <p id="memory">Loading...</p>
+            <div class="connection-detail">
+                <div class="connection-label">Status Port:</div>
+                <div class="connection-value">4225</div>
             </div>
         </div>
         
-        <button class="refresh-btn" onclick="refreshData()">Refresh Data</button>
+        <div class="grid">
+            <div class="panel">
+                <h2>System Status</h2>
+                <div class="stat">
+                    <div class="stat-label">Status:</div>
+                    <div class="stat-value"><span class="status-indicator status-active"></span>Active</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Temperature:</div>
+                    <div class="stat-value" id="temperature">--°F</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Free Memory:</div>
+                    <div class="stat-value" id="memory">-- KB</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">CPU Frequency:</div>
+                    <div class="stat-value" id="cpu-freq">-- MHz</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">SDK Version:</div>
+                    <div class="stat-value" id="sdk-version">--</div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <h2>Detection Stats</h2>
+                <div class="stat">
+                    <div class="stat-label">Packets Detected:</div>
+                    <div class="stat-value" id="packets">0</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Last Detection:</div>
+                    <div class="stat-value" id="last-detection">Never</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Detection Rate:</div>
+                    <div class="stat-value" id="detection-rate">0 pkts/min</div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <h2>System Info</h2>
+                <div class="stat">
+                    <div class="stat-label">Uptime:</div>
+                    <div class="stat-value" id="uptime">--:--:--</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Flash Size:</div>
+                    <div class="stat-value" id="flash-size">-- KB</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Memory Usage:</div>
+                    <div class="stat-value" id="memory-usage">--%</div>
+                </div>
+            </div>
+        </div>
         
-        <div class="drone-data" id="droneData">
-            <p>Loading latest drone data...</p>
+        <button class="button" onclick="refreshData()">Refresh Data</button>
+        
+        <div class="panel">
+            <h2>Latest Drone Data</h2>
+            <div class="drone-data" id="droneData">No drone data received yet</div>
+        </div>
+        
+        <div class="footer">
+            WarDragon Scanner v1.0 | ESP32 WiFi Remote ID Scanner
         </div>
     </div>
 
     <script>
+        let lastPacketCount = 0;
+        let lastPacketTime = Date.now();
+        let detectionRate = 0;
+        
+        function formatUptime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        function formatBytes(bytes, decimals = 2) {
+            if (bytes === 0) return '0 Bytes';
+            
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+        }
+        
         function refreshData() {
             fetch('/data')
                 .then(response => response.json())
                 .then(data => {
+                    const currentPackets = parseInt(data.packets);
+                    const now = Date.now();
+                    
+                    // Update packet detection rate
+                    if (currentPackets > lastPacketCount) {
+                        const newPackets = currentPackets - lastPacketCount;
+                        const timeElapsed = (now - lastPacketTime) / 1000 / 60; // in minutes
+                        detectionRate = newPackets / timeElapsed;
+                        document.getElementById('last-detection').textContent = 'Just now';
+                    }
+                    
+                    lastPacketCount = currentPackets;
+                    lastPacketTime = now;
+                    
+                    // Update UI elements
                     document.getElementById('packets').textContent = data.packets;
-                    document.getElementById('uptime').textContent = data.uptime + 's';
-                    document.getElementById('memory').textContent = data.memory + ' bytes';
-                    document.getElementById('droneData').textContent = data.latestDrone || 'No drone data received yet';
+                    document.getElementById('uptime').textContent = formatUptime(data.uptime);
+                    document.getElementById('memory').textContent = formatBytes(data.memory);
+                    document.getElementById('temperature').textContent = data.temperature + '°F';
+                    document.getElementById('detection-rate').textContent = detectionRate.toFixed(1) + ' pkts/min';
+                    document.getElementById('memory-usage').textContent = ((data.memory_total - data.memory) / data.memory_total * 100).toFixed(1) + '%';
+                    document.getElementById('cpu-freq').textContent = data.cpu_freq + ' MHz';
+                    document.getElementById('flash-size').textContent = formatBytes(data.flash_size);
+                    document.getElementById('sdk-version').textContent = data.sdk_version || '--';
+                    
+                    if (data.latestDrone && data.latestDrone !== 'No drone data received yet') {
+                        document.getElementById('droneData').textContent = data.latestDrone;
+                    }
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    document.getElementById('droneData').textContent = 'Error loading data';
                 });
         }
         
-        setInterval(refreshData, 2000);
+        // Initial refresh
         refreshData();
+        
+        // Set up periodic refresh
+        setInterval(refreshData, 2000);
     </script>
 </body>
 </html>
@@ -358,24 +708,42 @@ void WebServerTaskCode(void *pvParameters) {
   });
 
   server.on("/data", [](){
-    String response = "{";
-    response += "\"packets\":" + String(packetCount) + ",";
-    response += "\"uptime\":" + String(esp_timer_get_time() / 1000000UL) + ",";
-    response += "\"memory\":" + String(ESP.getFreeHeap()) + ",";
-    
+  String response = "{";
+  response += "\"packets\":" + String(packetCount) + ",";
+  response += "\"uptime\":" + String(esp_timer_get_time() / 1000000UL) + ",";
+  response += "\"memory\":" + String(ESP.getFreeHeap()) + ",";
+  response += "\"memory_total\":" + String(ESP.getHeapSize()) + ",";
+  response += "\"cpu_freq\":" + String(ESP.getCpuFreqMHz()) + ",";
+  response += "\"flash_size\":" + String(ESP.getFlashChipSize()) + ",";
+  response += "\"sdk_version\":\"" + String(ESP.getSdkVersion()) + "\",";
+  
+  // Convert temperature to Fahrenheit
+  float temp_c = getESP32Temperature();
+  float temp_f = (temp_c * 9.0/5.0) + 32.0;
+  response += "\"temperature\":" + String(temp_f, 1) + ",";
+  
+  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    String escapedData = latestDroneData;
+    escapedData.replace("\"", "\\\"");
+    escapedData.replace("\n", "\\n");
+    escapedData.replace("\r", "\\r");
+    response += "\"latestDrone\":\"" + escapedData + "\"";
+    xSemaphoreGive(dataMutex);
+  } else {
+    response += "\"latestDrone\":\"Data locked\"";
+  }
+  
+  response += "}";
+  server.send(200, "application/json", response);
+});
+
+  server.on("/stream", [](){
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-      String escapedData = latestDroneData;
-      escapedData.replace("\"", "\\\"");
-      escapedData.replace("\n", "\\n");
-      escapedData.replace("\r", "\\r");
-      response += "\"latestDrone\":\"" + escapedData + "\"";
+      server.send(200, "application/json", latestDroneData);
       xSemaphoreGive(dataMutex);
     } else {
-      response += "\"latestDrone\":\"Data locked\"";
+      server.send(503, "application/json", "{\"error\":\"Data unavailable\"}");
     }
-    
-    response += "}";
-    server.send(200, "application/json", response);
   });
 
   server.begin();
@@ -390,7 +758,7 @@ void WebServerTaskCode(void *pvParameters) {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("{ \"message\": \"Starting WarDragon ESP32 WiFi Remote ID Scanner with Multicast Publisher\" }");
+  Serial.println("{ \"message\": \"Starting WarDragon ESP32 WiFi Remote ID Scanner with ZMQ Publisher\" }");
   
   dataMutex = xSemaphoreCreateMutex();
   delay(200);
@@ -409,12 +777,22 @@ void setup() {
   delay(200);
   
   xTaskCreatePinnedToCore(
-    MulticastTaskCode,
-    "MulticastTask",
+    ZMQTaskCode,
+    "ZMQTask",
     8192,
     NULL,
     1,
-    &MulticastTask,
+    &ZMQTask,
+    1
+  );
+
+  xTaskCreatePinnedToCore(
+    StatusTaskCode,
+    "StatusTask",
+    8192,
+    NULL,
+    1,
+    &StatusTask,
     1
   );
   
@@ -434,7 +812,7 @@ void setup() {
 
 void loop() {
   vTaskDelay(pdMS_TO_TICKS(1000));
-  delay(10); // to avoid issues
+  delay(10);
 }
 
 static void callback(void *buffer, wifi_promiscuous_pkt_type_t type) {
@@ -496,9 +874,12 @@ static void callback(void *buffer, wifi_promiscuous_pkt_type_t type) {
   }
 }
 
+static float getESP32Temperature() {
+  return temperatureRead();  // Returns temp in Celsius
+}
+
 static void update_latest_data(struct uav_data *UAV, int index) {
   String jsonData = create_json_response(UAV, index);
-  String cotXML = create_cot_xml(UAV, index);
   
   Serial.print(jsonData);
   Serial.print("\r\n");
@@ -508,9 +889,9 @@ static void update_latest_data(struct uav_data *UAV, int index) {
     xSemaphoreGive(dataMutex);
   }
   
-  // Send CoT XML via multicast for the iOS app
-  publishMulticast(cotXML, false);
+  publishToZMTPClients(jsonData);  // Simplified call
 }
+
 
 static void parse_odid(struct uav_data *UAV, ODID_UAS_Data *UAS_data2) {
   memset(UAV->op_id, 0, sizeof(UAV->op_id));
@@ -647,85 +1028,83 @@ static void parse_french_id(struct uav_data *UAV, uint8_t *payload) {
     j += l + 2;
   }
 
-  UAV->lat_d = 1.0e-5 * (double)uav_lat.i32;
-  UAV->long_d = 1.0e-5 * (double)uav_long.i32;
-  UAV->base_lat_d = 1.0e-5 * (double)base_lat.i32;
-  UAV->base_long_d = 1.0e-5 * (double)base_long.i32;
-  UAV->altitude_msl = alt.i16;
-  UAV->height_agl = height.i16;
+ UAV->base_lat_d = 1.0e-5 * (double)base_lat.i32;
+ UAV->base_long_d = 1.0e-5 * (double)base_long.i32;
+ UAV->altitude_msl = alt.i16;
+ UAV->height_agl = height.i16;
 }
 
 static void store_mac(struct uav_data *uav, uint8_t *payload) {
-  memcpy(uav->mac, &payload[10], 6);
+ memcpy(uav->mac, &payload[10], 6);
 }
 
 static String create_json_response(struct uav_data *UAV, int index) {
-  unsigned long uptime_seconds = esp_timer_get_time() / 1000000UL;
+ unsigned long uptime_seconds = esp_timer_get_time() / 1000000UL;
 
-  char lat[16], lon[16], op_lat[16], op_lon[16];
-  dtostrf(UAV->lat_d, 11, 6, lat);
-  dtostrf(UAV->long_d, 11, 6, lon);
-  dtostrf(UAV->base_lat_d, 11, 6, op_lat);
-  dtostrf(UAV->base_long_d, 11, 6, op_lon);
+ char lat[16], lon[16], op_lat[16], op_lon[16];
+ dtostrf(UAV->lat_d, 11, 6, lat);
+ dtostrf(UAV->long_d, 11, 6, lon);
+ dtostrf(UAV->base_lat_d, 11, 6, op_lat);
+ dtostrf(UAV->base_long_d, 11, 6, op_lon);
 
-  char mac_str[18];
-  snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-           UAV->mac[0], UAV->mac[1], UAV->mac[2],
-           UAV->mac[3], UAV->mac[4], UAV->mac[5]);
+ char mac_str[18];
+ snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+          UAV->mac[0], UAV->mac[1], UAV->mac[2],
+          UAV->mac[3], UAV->mac[4], UAV->mac[5]);
 
-  String json = "{";
-  json += "\"index\":" + String(index) + ",";
-  json += "\"runtime\":" + String(uptime_seconds) + ",";
-  json += "\"Basic ID\":{";
-  json += "\"id\":\"" + String(strlen(UAV->uav_id) > 0 ? UAV->uav_id : "NONE") + "\",";
-  json += "\"id_type\":\"Serial Number (ANSI/CTA-2063-A)\",";
-  json += "\"ua_type\":" + String(UAV->ua_type) + ",";
-  json += "\"MAC\":\"" + String(mac_str) + "\",";
-  json += "\"RSSI\":" + String(UAV->rssi);
-  json += "},";
-  json += "\"Location/Vector Message\":{";
-  json += "\"latitude\":" + String(lat) + ",";
-  json += "\"longitude\":" + String(lon) + ",";
-  json += "\"speed\":" + String(UAV->speed) + ",";
-  json += "\"vert_speed\":" + String(UAV->speed_vertical) + ",";
-  json += "\"geodetic_altitude\":" + String(UAV->altitude_msl) + ",";
-  json += "\"height_agl\":" + String(UAV->height_agl) + ",";
-  json += "\"status\":" + String(UAV->status) + ",";
-  json += "\"direction\":" + String(UAV->heading) + ",";
-  json += "\"alt_pressure\":" + String(UAV->altitude_pressure) + ",";
-  json += "\"height_type\":" + String(UAV->height_type) + ",";
-  json += "\"horiz_acc\":" + String(UAV->horizontal_accuracy) + ",";
-  json += "\"vert_acc\":" + String(UAV->vertical_accuracy) + ",";
-  json += "\"baro_acc\":" + String(UAV->baro_accuracy) + ",";
-  json += "\"speed_acc\":" + String(UAV->speed_accuracy) + ",";
-  json += "\"timestamp\":" + String(UAV->timestamp);
-  json += "},";
-  json += "\"Self-ID Message\":{";
-  json += "\"text\":\"UAV " + String(mac_str) + " operational\",";
-  json += "\"description_type\":" + String(UAV->desc_type) + ",";
-  json += "\"description\":\"" + String(UAV->description) + "\"";
-  json += "},";
-  json += "\"System Message\":{";
-  json += "\"latitude\":" + String(op_lat) + ",";
-  json += "\"longitude\":" + String(op_lon) + ",";
-  json += "\"operator_lat\":" + String(op_lat) + ",";
-  json += "\"operator_lon\":" + String(op_lon) + ",";
-  json += "\"area_count\":" + String(UAV->area_count) + ",";
-  json += "\"area_radius\":" + String(UAV->area_radius) + ",";
-  json += "\"area_ceiling\":" + String(UAV->area_ceiling) + ",";
-  json += "\"area_floor\":" + String(UAV->area_floor) + ",";
-  json += "\"operator_alt_geo\":" + String(UAV->operator_altitude_geo) + ",";
-  json += "\"classification\":" + String(UAV->classification_type) + ",";
-  json += "\"timestamp\":" + String(UAV->system_timestamp);
-  json += "},";
-  json += "\"Auth Message\":{";
-  json += "\"type\":" + String(UAV->auth_type) + ",";
-  json += "\"page\":" + String(UAV->auth_page) + ",";
-  json += "\"length\":" + String(UAV->auth_length) + ",";
-  json += "\"timestamp\":" + String(UAV->auth_timestamp) + ",";
-  json += "\"data\":\"" + String(UAV->auth_data) + "\"";
-  json += "}";
-  json += "}";
+ String json = "{";
+ json += "\"index\":" + String(index) + ",";
+ json += "\"runtime\":" + String(uptime_seconds) + ",";
+ json += "\"Basic ID\":{";
+ json += "\"id\":\"" + String(strlen(UAV->uav_id) > 0 ? UAV->uav_id : "NONE") + "\",";
+ json += "\"id_type\":\"Serial Number (ANSI/CTA-2063-A)\",";
+ json += "\"ua_type\":" + String(UAV->ua_type) + ",";
+ json += "\"MAC\":\"" + String(mac_str) + "\",";
+ json += "\"RSSI\":" + String(UAV->rssi);
+ json += "},";
+ json += "\"Location/Vector Message\":{";
+ json += "\"latitude\":" + String(lat) + ",";
+ json += "\"longitude\":" + String(lon) + ",";
+ json += "\"speed\":" + String(UAV->speed) + ",";
+ json += "\"vert_speed\":" + String(UAV->speed_vertical) + ",";
+ json += "\"geodetic_altitude\":" + String(UAV->altitude_msl) + ",";
+ json += "\"height_agl\":" + String(UAV->height_agl) + ",";
+ json += "\"status\":" + String(UAV->status) + ",";
+ json += "\"direction\":" + String(UAV->heading) + ",";
+ json += "\"alt_pressure\":" + String(UAV->altitude_pressure) + ",";
+ json += "\"height_type\":" + String(UAV->height_type) + ",";
+ json += "\"horiz_acc\":" + String(UAV->horizontal_accuracy) + ",";
+ json += "\"vert_acc\":" + String(UAV->vertical_accuracy) + ",";
+ json += "\"baro_acc\":" + String(UAV->baro_accuracy) + ",";
+ json += "\"speed_acc\":" + String(UAV->speed_accuracy) + ",";
+ json += "\"timestamp\":" + String(UAV->timestamp);
+ json += "},";
+ json += "\"Self-ID Message\":{";
+ json += "\"text\":\"UAV " + String(mac_str) + " operational\",";
+ json += "\"description_type\":" + String(UAV->desc_type) + ",";
+ json += "\"description\":\"" + String(UAV->description) + "\"";
+ json += "},";
+ json += "\"System Message\":{";
+ json += "\"latitude\":" + String(op_lat) + ",";
+ json += "\"longitude\":" + String(op_lon) + ",";
+ json += "\"operator_lat\":" + String(op_lat) + ",";
+ json += "\"operator_lon\":" + String(op_lon) + ",";
+ json += "\"area_count\":" + String(UAV->area_count) + ",";
+ json += "\"area_radius\":" + String(UAV->area_radius) + ",";
+ json += "\"area_ceiling\":" + String(UAV->area_ceiling) + ",";
+ json += "\"area_floor\":" + String(UAV->area_floor) + ",";
+ json += "\"operator_alt_geo\":" + String(UAV->operator_altitude_geo) + ",";
+ json += "\"classification\":" + String(UAV->classification_type) + ",";
+ json += "\"timestamp\":" + String(UAV->system_timestamp);
+ json += "},";
+ json += "\"Auth Message\":{";
+ json += "\"type\":" + String(UAV->auth_type) + ",";
+ json += "\"page\":" + String(UAV->auth_page) + ",";
+ json += "\"length\":" + String(UAV->auth_length) + ",";
+ json += "\"timestamp\":" + String(UAV->auth_timestamp) + ",";
+ json += "\"data\":\"" + String(UAV->auth_data) + "\"";
+ json += "}";
+ json += "}";
 
-  return json;
+ return json;
 }
