@@ -133,9 +133,9 @@ void ZMQTaskCode(void *pvParameters) {
     }
     
     unsigned long currentTime = millis();
-    if (currentTime - lastStatusPublish > 30000) {  // Every 30 seconds
+    if (currentTime - lastStatusPublish > 60000) {
       String statusJson = create_status_json();
-      publishToZMTPClients(statusJson);  // Send esp32 system stats
+      publishToZMTPClients(statusJson);
       lastStatusPublish = currentTime;
     }
     
@@ -241,7 +241,6 @@ void StatusTaskCode(void *pvParameters) {
   std::vector<WiFiClient> statusClients;
   
   for(;;) {
-    // Accept new clients
     WiFiClient newStatusClient = statusServer.available();
     if (newStatusClient) {
       Serial.println("New status client connected");
@@ -250,7 +249,6 @@ void StatusTaskCode(void *pvParameters) {
       statusClients.push_back(newStatusClient);
     }
     
-    // Clean up disconnected clients
     for (auto it = statusClients.begin(); it != statusClients.end();) {
       if (!it->connected()) {
         it->stop();
@@ -261,7 +259,6 @@ void StatusTaskCode(void *pvParameters) {
       }
     }
     
-    // Send status updates to all connected clients
     if (!statusClients.empty()) {
       String statusJson = create_status_json();
       for (auto& client : statusClients) {
@@ -271,7 +268,7 @@ void StatusTaskCode(void *pvParameters) {
       }
     }
     
-    vTaskDelay(pdMS_TO_TICKS(10000)); // Update status every 10 seconds
+    vTaskDelay(pdMS_TO_TICKS(60000));
   }
 }
 
