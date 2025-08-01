@@ -1,3 +1,33 @@
+/* -*- tab-width: 2; mode: c; -*-
+ * Scanner for WiFi direct remote id.
+ * Handles both opendroneid and French formats.
+ *
+ * Copyright (c) 2020-2021, Steve Jack.
+ *
+ * MIT licence.
+ *
+ * Nov. '21     Added option to dump ODID frame to serial output.
+ * Oct. '21     Updated for opendroneid release 1.0.
+ * June '21     Added an option to log to an SD card.
+ * May '21      Fixed a bug that presented when handing packed ODID data from multiple sources.
+ * April '21    Added support for EN 4709-002 WiFi beacons.
+ * March '21    Added BLE scan. Doesn't work very well.
+ * January '21  Added support for ANSI/CTA 2063 French IDs.
+ *
+ * Notes
+ *
+ * May need a semaphore.
+ *
+ *
+ * CEMAXECUTER
+ * Minimal scanner for WiFi direct remote ID (OpenDroneID and French formats).
+ * Prints results in the same JSON format as originally shown, immediately upon decode.
+ *
+ * MIT License.
+ * 
+ * Luke Switzer
+ * July '25 AP and Dual RID FW adaptations
+ */
 #if !defined(ARDUINO_ARCH_ESP32)
 #error "This program requires an ESP32"
 #endif
@@ -832,7 +862,16 @@ static void callback(void *buffer, wifi_promiscuous_pkt_type_t type) {
   if (memcmp(nan_dest, &payload[4], 6) == 0) {
     if (odid_wifi_receive_message_pack_nan_action_frame(&UAS_data, (char *)currentUAV.op_id, payload, length) == 0) {
       parse_odid(&currentUAV, &UAS_data);
+      
+      uint8_t hostMac[6];
+      WiFi.macAddress(hostMac);
+      memcpy(currentUAV.source_node_mac, hostMac, 6);
+      currentUAV.node_uptime = esp_timer_get_time() / 1000000UL;
+      currentUAV.node_temperature = getESP32Temperature();
+      currentUAV.node_packet_count = packetCount;
+      
       packetCount++;
+      Serial.println("HOST DETECTED DRONE: Processing locally");
       update_latest_data(&currentUAV, packetCount);
     }
   }
@@ -848,7 +887,16 @@ static void callback(void *buffer, wifi_promiscuous_pkt_type_t type) {
       if (!printed) {
         if ((typ == 0xdd) && (val[0] == 0x6a) && (val[1] == 0x5c) && (val[2] == 0x35)) {
           parse_french_id(&currentUAV, &payload[offset]);
+          
+          uint8_t hostMac[6];
+          WiFi.macAddress(hostMac);
+          memcpy(currentUAV.source_node_mac, hostMac, 6);
+          currentUAV.node_uptime = esp_timer_get_time() / 1000000UL;
+          currentUAV.node_temperature = getESP32Temperature();
+          currentUAV.node_packet_count = packetCount;
+          
           packetCount++;
+          Serial.println("HOST DETECTED DRONE (French): Processing locally");
           update_latest_data(&currentUAV, packetCount);
           printed = true;
         }
@@ -860,7 +908,16 @@ static void callback(void *buffer, wifi_promiscuous_pkt_type_t type) {
             memset(&UAS_data, 0, sizeof(UAS_data));
             odid_message_process_pack(&UAS_data, &payload[j], length - j);
             parse_odid(&currentUAV, &UAS_data);
+            
+            uint8_t hostMac[6];
+            WiFi.macAddress(hostMac);
+            memcpy(currentUAV.source_node_mac, hostMac, 6);
+            currentUAV.node_uptime = esp_timer_get_time() / 1000000UL;
+            currentUAV.node_temperature = getESP32Temperature();
+            currentUAV.node_packet_count = packetCount;
+            
             packetCount++;
+            Serial.println("HOST DETECTED DRONE (Vendor): Processing locally");
             update_latest_data(&currentUAV, packetCount);
             printed = true;
           }
@@ -868,6 +925,7 @@ static void callback(void *buffer, wifi_promiscuous_pkt_type_t type) {
       }
 
       offset += len + 2;
+      if (offset >= length) break;
     }
   }
 }
