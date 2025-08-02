@@ -369,13 +369,13 @@ void ScannerTaskCode(void *pvParameters) {
   esp_wifi_set_promiscuous_rx_cb(&callback);
 
   for(;;) {
-    // Scan for RID packets (800ms on Ch6)
-    esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
-    vTaskDelay(pdMS_TO_TICKS(800));
-
-    // Brief AP maintenance (200ms on Ch1)
+    // AP - maintain staiblity across nodes
     esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-    vTaskDelay(pdMS_TO_TICKS(200));
+    vTaskDelay(pdMS_TO_TICKS(700));
+
+    // Scan for RID packets on host
+    esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
+    vTaskDelay(pdMS_TO_TICKS(300));
   }
 }
 
@@ -549,7 +549,7 @@ void setup() {
 }
 
 void loop() {
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  vTaskDelay(pdMS_TO_TICKS(5000));
   delay(10);
 }
 
@@ -853,61 +853,47 @@ static void update_latest_data(struct uav_data *UAV, int index) {
 }
 
 static void sendZMTPGreeting(WiFiClient& client) {
- uint8_t greeting[] = {0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7F};
- client.write(greeting, sizeof(greeting));
- 
- String signature = "\x01ZMTP";
- client.write((const uint8_t*)signature.c_str(), signature.length());
- 
- uint8_t majorVersion = 3;
- uint8_t minorVersion = 0;
- client.write(&majorVersion, 1);
- client.write(&minorVersion, 1);
- 
- String mechanism = "NULL";
- uint8_t mechanismLen = mechanism.length();
- client.write(&mechanismLen, 1);
- client.write((const uint8_t*)mechanism.c_str(), mechanismLen);
- 
- uint8_t asServer = 0;
- client.write(&asServer, 1);
- 
- uint8_t filler[31] = {0};
- client.write(filler, sizeof(filler));
- 
- client.flush();
+  if (!client.connected()) return;
+  
+  // ZMTP greeting: anonymous identity (empty string)
+  uint8_t greeting[2] = {0x01, 0x00}; // length=1, flags=0 (final frame)
+  client.write(greeting, 2);
+  client.flush();
 }
 
 static void sendZMTPMessage(WiFiClient& client, const String& message) {
- if (!client.connected()) return;
- 
- size_t msgLen = message.length();
- uint8_t flags = 0x00;
- 
- if (msgLen < 255) {
-   uint8_t shortMarker = 0x00;
-   uint8_t shortLen = (uint8_t)msgLen;
-   
-   client.write(&shortMarker, 1);
-   client.write(&shortLen, 1);
-   client.write(&flags, 1);
-   client.write((const uint8_t*)message.c_str(), msgLen);
- } else {
-   uint8_t longMarker = 0x02;
-   uint64_t longLen = msgLen;
-   
-   client.write(&longMarker, 1);
-   
-   for (int i = 7; i >= 0; i--) {
-     uint8_t byte = (longLen >> (i * 8)) & 0xFF;
-     client.write(&byte, 1);
-   }
-   
-   client.write(&flags, 1);
-   client.write((const uint8_t*)message.c_str(), msgLen);
- }
- 
- client.flush();
+  if (!client.connected()) return;
+  
+  uint32_t msgLen = message.length();
+  
+  // ZMTP frame format: [length][flags][body]
+  if (msgLen < 255) {
+    // Short frame: length as single byte
+    uint8_t shortLen = (uint8_t)(msgLen + 1); // +1 for flags byte
+    uint8_t flags = 0x00; // Final frame, no more frames
+    
+    client.write(&shortLen, 1);
+    client.write(&flags, 1);
+    client.write((const uint8_t*)message.c_str(), msgLen);
+  } else {
+    // Long frame: 0xFF + 8-byte length
+    uint8_t longMarker = 0xFF;
+    uint64_t longLen = msgLen + 1; // +1 for flags byte
+    uint8_t flags = 0x00; // Final frame
+    
+    client.write(&longMarker, 1);
+    
+    // Write 64-bit length in network byte order
+    for (int i = 7; i >= 0; i--) {
+      uint8_t byte = (longLen >> (i * 8)) & 0xFF;
+      client.write(&byte, 1);
+    }
+    
+    client.write(&flags, 1);
+    client.write((const uint8_t*)message.c_str(), msgLen);
+  }
+  
+  client.flush();
 }
 
 static void publishToZMTPClients(const String& data) {

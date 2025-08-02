@@ -263,14 +263,12 @@ void ScannerTaskCode(void *pvParameters) {
   };
   esp_wifi_set_country(&country);
 
-  // Sync with host's 800ms ch6/200ms ch1 pattern
   for(;;) {
     esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
-    vTaskDelay(pdMS_TO_TICKS(800));  // 80% scanning
+    vTaskDelay(pdMS_TO_TICKS(700));
     
-    // Report during host's AP maintenance window
     esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-    vTaskDelay(pdMS_TO_TICKS(200));  // 20% reporting
+    vTaskDelay(pdMS_TO_TICKS(300));
   }
 }
 
@@ -354,7 +352,7 @@ void setup() {
 }
 
 void loop() {
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  vTaskDelay(pdMS_TO_TICKS(5000));
   delay(10);
 }
 
